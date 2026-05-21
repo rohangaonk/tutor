@@ -59,14 +59,14 @@ Goal: upload a document, process it asynchronously, and store searchable chunks.
 
 Steps:
 
-1. Implement `POST /upload/presign` for S3 pre-signed uploads.
-2. Implement `POST /upload/confirm` to register the document and enqueue ingestion.
-3. Wire LocalStack S3 and queue behavior for local testing.
-4. Implement worker download, parsing, and text extraction for PDF and DOCX.
-5. Implement chunking and embeddings.
-6. Persist chunks and vectors to Postgres.
-7. Update document status during the ingestion lifecycle.
-8. Add failure handling and retry behavior.
+1. ✅ Implement `POST /upload/presign` for S3 pre-signed uploads.
+2. ✅ Implement `POST /upload/confirm` to register the document and enqueue ingestion.
+3. ✅ Wire LocalStack S3 and queue behavior for local testing.
+4. ✅ Implement worker download, parsing, and text extraction for PDF and DOCX.
+5. ✅ Implement chunking and embeddings.
+6. ✅ Persist chunks and vectors to Postgres.
+7. ✅ Update document status during the ingestion lifecycle.
+8. ✅ Add failure handling and retry behavior.
 
 Definition of done:
 

@@ -67,7 +67,7 @@ class Chunk(Base):
     doc_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
-    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
 

@@ -46,3 +46,6 @@ infra/cdk.out/
 
 # Docker
 *.log
+
+# sample files
+sample.*

@@ -1,0 +1,151 @@
+import io
+import logging
+import uuid
+from typing import Iterator
+
+import boto3
+from docx import Document as DocxDocument
+from openai import OpenAI
+from pypdf import PdfReader
+
+from common.config import MODEL_REGISTRY, settings
+from common.db import SessionLocal
+from common.models import Chunk, Document, DocumentStatus
+from worker.celery_app import app
+
+logger = logging.getLogger(__name__)
+
+CHUNK_SIZE = 1000       # characters
+CHUNK_OVERLAP = 150     # characters
+EMBEDDING_DIMENSIONS = 768
+
+
+# ---------------------------------------------------------------------------
+# S3 helpers
+# ---------------------------------------------------------------------------
+
+def _s3_client():
+    endpoint_url = settings.aws_endpoint_url
+    if endpoint_url is None and settings.s3_bucket.endswith("-local"):
+        endpoint_url = "http://localhost:4566"
+    kwargs: dict = {
+        "region_name": settings.aws_region,
+        "aws_access_key_id": "test",
+        "aws_secret_access_key": "test",
+    }
+    if endpoint_url:
+        kwargs["endpoint_url"] = endpoint_url
+    return boto3.client("s3", **kwargs)
+
+
+def _download_bytes(s3_key: str) -> bytes:
+    s3 = _s3_client()
+    buf = io.BytesIO()
+    s3.download_fileobj(settings.s3_bucket, s3_key, buf)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+def _extract_text(data: bytes, filename: str) -> str:
+    lower = filename.lower()
+    if lower.endswith(".pdf"):
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    if lower.endswith(".docx"):
+        doc = DocxDocument(io.BytesIO(data))
+        return "\n".join(p.text for p in doc.paragraphs)
+    raise ValueError(f"Unsupported file type: {filename}")
+
+
+# ---------------------------------------------------------------------------
+# Chunking
+# ---------------------------------------------------------------------------
+
+def _chunk_text(text: str) -> Iterator[str]:
+    """Yield fixed-size overlapping character chunks."""
+    start = 0
+    while start < len(text):
+        end = start + CHUNK_SIZE
+        yield text[start:end]
+        start += CHUNK_SIZE - CHUNK_OVERLAP
+
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
+
+def _embed(texts: list[str]) -> list[list[float]]:
+    """Embed a batch of texts via OpenRouter (OpenAI-compatible)."""
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=settings.openrouter_api_key,
+    )
+    model = MODEL_REGISTRY["embeddings"]["openrouter"]
+    response = client.embeddings.create(
+        model=model,
+        input=texts,
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
+    return [item.embedding for item in response.data]
+
+
+# ---------------------------------------------------------------------------
+# Task
+# ---------------------------------------------------------------------------
+
+EMBED_BATCH_SIZE = 32
+
+
+@app.task(name="worker.tasks.ingest_document", bind=True, max_retries=3, default_retry_delay=30)
+def ingest_document(self, document_id: str) -> None:
+    """Download, parse, chunk, embed, and persist a document."""
+    doc_uuid = uuid.UUID(document_id)
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_uuid)
+        if doc is None:
+            logger.error("ingest_document: document %s not found", document_id)
+            return
+
+        doc.status = DocumentStatus.processing
+        db.commit()
+        logger.info("ingest_document: %s — downloading from S3 key %s", document_id, doc.s3_key)
+
+        data = _download_bytes(doc.s3_key)
+        text = _extract_text(data, doc.name)
+        logger.info("ingest_document: %s — extracted %d chars", document_id, len(text))
+
+        chunks = list(_chunk_text(text))
+        logger.info("ingest_document: %s — %d chunks", document_id, len(chunks))
+
+        # Embed in batches
+        embeddings: list[list[float]] = []
+        for i in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[i : i + EMBED_BATCH_SIZE]
+            embeddings.extend(_embed(batch))
+            logger.info("ingest_document: %s — embedded chunks %d–%d", document_id, i, i + len(batch))
+        # Persist chunks
+        for content, embedding in zip(chunks, embeddings):
+            db.add(Chunk(
+                doc_id=doc_uuid,
+                content=content,
+                metadata_={},
+                embedding=embedding,
+            ))
+        doc.status = DocumentStatus.ready
+        db.commit()
+        logger.info("ingest_document: %s — done, %d chunks persisted", document_id, len(chunks))
+
+    except Exception as exc:
+        db.rollback()
+        doc = db.get(Document, doc_uuid)
+        if doc:
+            doc.status = DocumentStatus.failed
+            db.commit()
+        logger.exception("ingest_document: %s — failed", document_id)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()

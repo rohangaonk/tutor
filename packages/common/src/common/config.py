@@ -1,6 +1,33 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# ---------------------------------------------------------------------------
+# Model registry — maps task type → provider → model name
+# ---------------------------------------------------------------------------
+MODEL_REGISTRY: dict[str, dict[str, str | None]] = {
+    # RAG / document Q&A — benefits from large context window
+    "rag": {
+        "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "openrouter": "openai/gpt-3.5-turbo",
+    },
+    # Socratic quiz — needs reliable structured JSON-schema output
+    "quiz": {
+        "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "openrouter": "openai/gpt-4o-mini",
+    },
+    # Progress / weakness report
+    "progress": {
+        "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "openrouter": "openai/gpt-4o-mini",
+    },
+    # Embeddings — vector representations for RAG/vector search
+    "embeddings": {
+        "groq": None,  # Groq doesn't offer embeddings
+        "openrouter": "text-embedding-3-small",
+    },
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -16,11 +43,10 @@ class Settings(BaseSettings):
     s3_bucket: str = "tutor-uploads-local"
     sqs_queue_url: str = "http://localhost:4566/000000000000/tutor-ingestion-local"
 
-    # OpenAI / embeddings
-    openai_api_key: str = ""
-
-    # Anthropic
-    anthropic_api_key: str = ""
+    # LLM providers
+    llm_provider: str = "groq"  # primary provider: "groq" or "openrouter"
+    groq_api_key: str = ""
+    openrouter_api_key: str = ""
 
 
 settings = Settings()

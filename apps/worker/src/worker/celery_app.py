@@ -13,3 +13,5 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+app.autodiscover_tasks(["worker"])
