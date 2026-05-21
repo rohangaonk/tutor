@@ -17,10 +17,10 @@ Goal: create a runnable local development skeleton with no business logic yet.
 
 Steps:
 
-1. Create the monorepo layout: `apps/`, `packages/`, `infra/`, `ops/`.
-2. Initialize the root npm workspace for the frontend package.
-3. Initialize the Python workspace with `uv` for backend and shared code.
-4. Add a shared Python package for common models, config, and domain logic.
+1. ✅ Create the monorepo layout: `apps/`, `packages/`, `infra/`, `ops/`.
+2. ✅ Initialize the root npm workspace for the frontend package.
+3. ✅ Initialize the Python workspace with `uv` for backend and shared code.
+4. ✅ Add a shared Python package for common models, config, and domain logic.
 5. Scaffold the FastAPI app with a `/health` endpoint.
 6. Scaffold the Celery worker entrypoint.
 7. Scaffold the Next.js app under the frontend workspace.

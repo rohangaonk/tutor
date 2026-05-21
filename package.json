@@ -1,0 +1,11 @@
+{
+  "name": "tutor",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
