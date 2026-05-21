@@ -21,9 +21,9 @@ Steps:
 2. ✅ Initialize the root npm workspace for the frontend package.
 3. ✅ Initialize the Python workspace with `uv` for backend and shared code.
 4. ✅ Add a shared Python package for common models, config, and domain logic.
-5. Scaffold the FastAPI app with a `/health` endpoint.
-6. Scaffold the Celery worker entrypoint.
-7. Scaffold the Next.js app under the frontend workspace.
+5. ✅ Scaffold the FastAPI app with a `/health` endpoint.
+6. ✅ Scaffold the Celery worker entrypoint.
+7. ✅ Scaffold the Next.js app under the frontend workspace.
 8. Add `docker-compose` for local Postgres, Redis, and LocalStack.
 9. Add a root `Makefile` for local dev commands.
 10. Add Dockerfiles for the API and worker.
