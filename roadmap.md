@@ -24,9 +24,9 @@ Steps:
 5. ✅ Scaffold the FastAPI app with a `/health` endpoint.
 6. ✅ Scaffold the Celery worker entrypoint.
 7. ✅ Scaffold the Next.js app under the frontend workspace.
-8. Add `docker-compose` for local Postgres, Redis, and LocalStack.
-9. Add a root `Makefile` for local dev commands.
-10. Add Dockerfiles for the API and worker.
+8. ✅ Add `docker-compose` for local Postgres, Redis, and LocalStack.
+9. ✅ Add a root `Makefile` for local dev commands.
+10. ✅ Add Dockerfiles for the API and worker.
 
 Definition of done:
 
