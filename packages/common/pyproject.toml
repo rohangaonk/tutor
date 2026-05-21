@@ -2,7 +2,12 @@
 name = "common"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "sqlalchemy>=2.0",
+    "pgvector>=0.3",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

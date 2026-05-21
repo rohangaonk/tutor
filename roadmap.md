@@ -40,12 +40,12 @@ Goal: establish the database schema, migrations, and shared backend foundations.
 
 Steps:
 
-1. Add SQLAlchemy models for users, documents, chunks, quiz sessions, quiz attempts, and progress.
-2. Add Alembic migrations.
-3. Enable `pgvector` in local and deployed Postgres environments.
-4. Add the vector index for chunk similarity search.
-5. Add a shared DB session and repository layer in the Python package.
-6. Add config and secrets handling for local, staging, and production.
+1. ✅ Add SQLAlchemy models for users, documents, chunks, quiz sessions, quiz attempts, and progress.
+2. ✅ Add Alembic migrations.
+3. ✅ Enable `pgvector` in local and deployed Postgres environments.
+4. ✅ Add the vector index for chunk similarity search.
+5. ✅ Add a shared DB session and repository layer in the Python package.
+6. ✅ Add config and secrets handling for local, staging, and production.
 
 Definition of done:
 
