@@ -71,6 +71,77 @@ export async function confirmUpload(
 // Chat (streaming)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Quiz
+// ---------------------------------------------------------------------------
+
+export interface QuizStartResponse {
+  session_id: string;
+  question: string;
+  concept: string;
+  difficulty: string;
+}
+
+export interface QuizAnswerResponse {
+  feedback: string;
+  correct_answer: string;
+  confidence_score: number;
+  is_correct: boolean;
+  next_question: string | null;
+  next_concept: string | null;
+  difficulty: string;
+  is_completed: boolean;
+}
+
+export interface QuizReportConcept {
+  concept: string;
+  total: number;
+  correct: number;
+  accuracy: number;
+  avg_confidence: number;
+}
+
+export interface QuizReport {
+  session_id: string;
+  concepts: QuizReportConcept[];
+}
+
+export async function getQuizReport(sessionId: string): Promise<QuizReport> {
+  const res = await fetch(`${API_BASE}/quiz/${sessionId}/report`);
+  if (!res.ok) throw new Error(`Report fetch failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function startQuiz(
+  docId: string,
+  maxQuestions = 5
+): Promise<QuizStartResponse> {
+  const res = await fetch(`${API_BASE}/quiz/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ doc_id: docId, user_id: USER_ID, max_questions: maxQuestions }),
+  });
+  if (!res.ok) throw new Error(`Quiz start failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function submitAnswer(
+  sessionId: string,
+  answer: string
+): Promise<QuizAnswerResponse> {
+  const res = await fetch(`${API_BASE}/quiz/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, answer }),
+  });
+  if (!res.ok) throw new Error(`Quiz answer failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Chat (streaming)
+// ---------------------------------------------------------------------------
+
 export async function* streamChat(
   question: string,
   documentId: string

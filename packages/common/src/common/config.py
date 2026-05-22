@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     openrouter_api_key: str = ""
 
+    @property
+    def pg_dsn(self) -> str:
+        """psycopg3-compatible DSN (strips SQLAlchemy driver prefix)."""
+        return (
+            self.database_url
+            .replace("postgresql+psycopg2://", "postgresql://")
+            .replace("postgresql+psycopg://", "postgresql://")
+        )
+
 
 settings = Settings()
 

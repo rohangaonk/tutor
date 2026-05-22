@@ -96,12 +96,12 @@ Goal: start a quiz session, adapt the next question, and persist session state.
 
 Steps:
 
-1. Define the quiz session state model.
-2. Implement LangGraph quiz flow nodes.
-3. Persist quiz state in Postgres.
-4. Implement `POST /quiz/start`.
-5. Implement `POST /quiz/answer`.
-6. Add scoring and difficulty adaptation logic.
+1. ✅ Define the quiz session state model.
+2. ✅ Implement LangGraph quiz flow nodes.
+3. ✅ Persist quiz state in Postgres.
+4. ✅ Implement `POST /quiz/start`.
+5. ✅ Implement `POST /quiz/answer`.
+6. ✅ Add scoring and difficulty adaptation logic.
 
 Definition of done:
 
