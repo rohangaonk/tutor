@@ -79,11 +79,11 @@ Goal: answer questions against uploaded documents with streaming responses.
 
 Steps:
 
-1. Implement document-scoped vector retrieval.
-2. Build the RAG chain in the backend.
-3. Implement `POST /chat` with streaming SSE output.
-4. Add prompt structure and context assembly.
-5. Validate the flow with local command-line requests before touching the UI.
+1. ✅ Implement document-scoped vector retrieval.
+2. ✅ Build the RAG chain in the backend.
+3. ✅ Implement `POST /chat` with streaming SSE output.
+4. ✅ Add prompt structure and context assembly.
+5. ✅ Validate the flow with local command-line requests before touching the UI.
 
 Definition of done:
 
