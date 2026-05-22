@@ -23,7 +23,6 @@ import uuid
 
 import numpy as np
 
-from common.config import settings
 from common.db import SessionLocal
 from common.models import Chunk, QuizAttempt, QuizSession
 from api.rag import _embed_query, _get_llm
@@ -148,8 +147,7 @@ def retrieve_context(state: QuizState) -> dict:
         seed = "key facts and concepts"
         query_embedding = _embed_query(seed)
 
-        from common.retrieval import retrieve_chunks_mmr as _mmr  # noqa: PLC0415
-        # We already have candidates in memory — run MMR directly.
+        # Run MMR directly on the in-memory candidates.
         k = min(5, len(candidates))
         if len(candidates) <= k:
             selected = candidates
@@ -190,11 +188,15 @@ def generate_question(state: QuizState) -> dict:
         asked_concepts=", ".join(state["asked_concepts"]) or "none",
     )
 
+    raw = ""
     try:
         raw = _call_llm_generate(prompt)
+        parsed = _parse_json(raw)
+        question = parsed["question"]
+        concept = parsed["concept"]
     except Exception as exc:
-        logger.warning("generate_question: LLM parse failed (%s) — using raw output", exc)
-        question = raw.strip()
+        logger.warning("generate_question: LLM call/parse failed (%s) — using raw output", exc)
+        question = raw.strip() or "What is the main concept covered in this document?"
         concept = "general"
 
     embedding = _embed_query(question)
