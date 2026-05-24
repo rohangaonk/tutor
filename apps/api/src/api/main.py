@@ -8,6 +8,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from api.routers import chat, documents, upload
 from api.routers import quiz as quiz_router
+from api.routers import progress as progress_router
 from api.quiz.graph import build_quiz_graph
 from common.config import settings
 
@@ -76,6 +77,7 @@ app.include_router(upload.router)
 app.include_router(chat.router)
 app.include_router(documents.router)
 app.include_router(quiz_router.router)
+app.include_router(progress_router.router)
 
 
 @app.get("/health")

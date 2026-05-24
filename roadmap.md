@@ -114,9 +114,9 @@ Goal: make learner progress queryable and visible in the API.
 
 Steps:
 
-1. Update progress data after quiz attempts.
-2. Implement `GET /progress/{user_id}`.
-3. Add summary and topic strength calculations.
+1. ✅ Update progress data after quiz attempts.
+2. ✅ Implement `GET /progress/{user_id}`.
+3. ✅ Add summary and topic strength calculations.
 
 Definition of done:
 

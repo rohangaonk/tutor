@@ -7,8 +7,12 @@ import {
   startQuiz,
   submitAnswer,
   getQuizReport,
+  listQuizSessions,
+  listQuizAttempts,
   QuizAnswerResponse,
   QuizReport,
+  QuizSession,
+  QuizAttempt,
 } from "@/lib/api";
 
 type Phase = "pick" | "loading" | "question" | "feedback" | "done" | "error";
@@ -42,6 +46,12 @@ export default function QuizPage() {
   const [docs, setDocs] = useState<Document[]>([]);
   const [docsError, setDocsError] = useState<string | null>(null);
 
+  const [pastSessions, setPastSessions] = useState<QuizSession[]>([]);
+  const [expandedSession, setExpandedSession] = useState<string | null>(null);
+  const [sessionReports, setSessionReports] = useState<Record<string, QuizReport>>({});
+  const [sessionAttempts, setSessionAttempts] = useState<Record<string, QuizAttempt[]>>({});
+  const [expandedAttempt, setExpandedAttempt] = useState<string | null>(null);
+
   const [phase, setPhase] = useState<Phase>("pick");
   const [error, setError] = useState<string | null>(null);
 
@@ -66,7 +76,35 @@ export default function QuizPage() {
     listDocuments()
       .then((all) => setDocs(all.filter((d) => d.status === "ready")))
       .catch((e) => setDocsError(e.message));
+    listQuizSessions()
+      .then((all) => setPastSessions(all.filter((s) => s.completed)))
+      .catch(() => {});
   }, []);
+
+  async function handleExpandSession(sessionId: string) {
+    if (expandedSession === sessionId) {
+      setExpandedSession(null);
+      return;
+    }
+    setExpandedSession(sessionId);
+    setExpandedAttempt(null);
+    const fetches: Promise<void>[] = [];
+    if (!sessionReports[sessionId]) {
+      fetches.push(
+        getQuizReport(sessionId)
+          .then((r) => setSessionReports((prev) => ({ ...prev, [sessionId]: r })))
+          .catch(() => {})
+      );
+    }
+    if (!sessionAttempts[sessionId]) {
+      fetches.push(
+        listQuizAttempts(sessionId)
+          .then((a) => setSessionAttempts((prev) => ({ ...prev, [sessionId]: a })))
+          .catch(() => {})
+      );
+    }
+    await Promise.all(fetches);
+  }
 
   async function handleStart() {
     if (!selectedDocId) return;
@@ -175,6 +213,7 @@ export default function QuizPage() {
 
       {/* ── Document picker ── */}
       {phase === "pick" && (
+        <>
         <div className="w-full max-w-md space-y-4">
           {docsError && (
             <p className="text-red-400 text-sm">{docsError}</p>
@@ -218,6 +257,114 @@ export default function QuizPage() {
             Start Quiz
           </button>
         </div>
+
+        {/* ── Past sessions ── */}
+        {pastSessions.length > 0 && (
+          <div className="w-full max-w-md mt-8 space-y-2">
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Past sessions</p>
+            {pastSessions.map((s) => {
+              const isOpen = expandedSession === s.session_id;
+              const report = sessionReports[s.session_id];
+              const attempts = sessionAttempts[s.session_id];
+              const loading = isOpen && (!report || !attempts);
+              return (
+                <div key={s.session_id} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-750 transition-colors text-left"
+                    onClick={() => handleExpandSession(s.session_id)}
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-gray-200">{s.doc_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {new Date(s.created_at).toLocaleString()} · {s.questions_asked}Q · score {Math.round(s.score * 100)}%
+                      </p>
+                    </div>
+                    <span className="text-gray-500 text-xs">{isOpen ? "▲" : "▼"}</span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-gray-700 px-4 py-3 space-y-4">
+                      {loading && (
+                        <p className="text-xs text-gray-500 animate-pulse">Loading…</p>
+                      )}
+
+                      {/* Per-concept confidence table */}
+                      {report && report.concepts.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">By concept</p>
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="text-left text-gray-500 border-b border-gray-700">
+                                <th className="pb-1 pr-3 font-normal">Concept</th>
+                                <th className="pb-1 pr-3 font-normal text-center">Correct</th>
+                                <th className="pb-1 font-normal text-center">Confidence</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {report.concepts.map((c) => (
+                                <tr key={c.concept} className="border-b border-gray-800">
+                                  <td className="py-1 pr-3 text-gray-300">{c.concept}</td>
+                                  <td className="py-1 pr-3 text-center text-gray-400">{c.correct}/{c.total}</td>
+                                  <td className="py-1 text-center">
+                                    <span className={c.avg_confidence >= 0.7 ? "text-green-400" : c.avg_confidence >= 0.4 ? "text-yellow-400" : "text-red-400"}>
+                                      {Math.round(c.avg_confidence * 100)}%
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Individual questions */}
+                      {attempts && attempts.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Questions</p>
+                          <div className="space-y-1">
+                            {attempts.map((a, i) => {
+                              const isExpanded = expandedAttempt === a.id;
+                              return (
+                                <div key={a.id} className="rounded-lg border border-gray-700 overflow-hidden">
+                                  <button
+                                    className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-gray-700 transition-colors"
+                                    onClick={() => setExpandedAttempt(isExpanded ? null : a.id)}
+                                  >
+                                    <span className={`mt-0.5 text-xs font-bold shrink-0 ${a.correct ? "text-green-400" : "text-red-400"}`}>
+                                      {a.correct ? "✓" : "✗"}
+                                    </span>
+                                    <span className="text-xs text-gray-300 flex-1">{i + 1}. {a.question}</span>
+                                    <span className="text-xs text-gray-500 shrink-0">{Math.round(a.confidence_score * 100)}%</span>
+                                  </button>
+
+                                  {isExpanded && (
+                                    <div className="border-t border-gray-700 px-3 py-2 space-y-2 bg-gray-900/50">
+                                      <div>
+                                        <p className="text-xs text-gray-500 mb-0.5">Your answer</p>
+                                        <p className="text-xs text-gray-300 italic">{a.user_answer}</p>
+                                      </div>
+                                      {a.ai_feedback && (
+                                        <div>
+                                          <p className="text-xs text-gray-500 mb-0.5">Feedback</p>
+                                          <p className="text-xs text-gray-300 leading-relaxed">{a.ai_feedback}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        </>
       )}
 
       {/* ── Loading ── */}

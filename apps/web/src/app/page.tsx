@@ -21,6 +21,18 @@ export default function Home() {
         >
           Chat
         </a>
+        <a
+          href="/quiz"
+          className="px-6 py-3 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          Quiz
+        </a>
+        <a
+          href="/progress"
+          className="px-6 py-3 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          Progress
+        </a>
       </div>
     </div>
   );

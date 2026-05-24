@@ -16,7 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from common.db import get_db
-from common.models import QuizAttempt, QuizSession
+from common.models import Document, QuizAttempt, QuizSession
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
@@ -179,6 +179,68 @@ def submit_answer(
         difficulty=difficulty,
         is_completed=False,
     )
+
+
+@router.get("/sessions/{user_id}")
+def list_sessions(user_id: str, db: Session = Depends(get_db)):
+    """Return completed quiz sessions for a user, newest first."""
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    sessions = (
+        db.query(QuizSession)
+        .filter(QuizSession.user_id == uid)
+        .order_by(QuizSession.created_at.desc())
+        .all()
+    )
+
+    result = []
+    for s in sessions:
+        completed = bool(s.state_json.get("completed", False)) if s.state_json else False
+        doc = db.get(Document, s.doc_id)
+        result.append({
+            "session_id": str(s.id),
+            "doc_id": str(s.doc_id),
+            "doc_name": doc.name if doc else "Unknown",
+            "created_at": s.created_at.isoformat(),
+            "score": round(s.score, 3),
+            "questions_asked": s.state_json.get("questions_asked", 0) if s.state_json else 0,
+            "completed": completed,
+        })
+
+    return result
+
+
+@router.get("/{session_id}/attempts")
+def get_attempts(session_id: str, db: Session = Depends(get_db)):
+    """Return individual Q&A attempts for a session, in creation order."""
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+
+    attempts = (
+        db.query(QuizAttempt)
+        .filter(QuizAttempt.session_id == sid)
+        .order_by(QuizAttempt.created_at)
+        .all()
+    )
+
+    return [
+        {
+            "id": str(a.id),
+            "question": a.question,
+            "user_answer": a.answer,
+            "correct": a.correct,
+            "concept": a.concept,
+            "ai_feedback": a.ai_feedback,
+            "confidence_score": a.confidence_score,
+            "difficulty_level": a.difficulty_level,
+        }
+        for a in attempts
+    ]
 
 
 @router.get("/{session_id}/report")

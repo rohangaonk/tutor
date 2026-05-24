@@ -24,7 +24,7 @@ import uuid
 import numpy as np
 
 from common.db import SessionLocal
-from common.models import Chunk, QuizAttempt, QuizSession
+from common.models import Chunk, Progress, QuizAttempt, QuizSession
 from api.rag import _embed_query, _get_llm
 from api.quiz.state import QuizState
 
@@ -317,7 +317,7 @@ def route_after_persist(state: QuizState) -> str:
 
 
 def finalize_session(state: QuizState) -> dict:
-    """Write a lightweight summary to QuizSession.state_json on completion."""
+    """Write a lightweight summary to QuizSession.state_json on completion and upsert Progress rows."""
     db = SessionLocal()
     try:
         session = db.get(QuizSession, uuid.UUID(state["session_id"]))
@@ -334,6 +334,44 @@ def finalize_session(state: QuizState) -> dict:
                 "avg_score": avg_score,
                 "weak_areas": state["weak_areas"],
             }
+            db.flush()
+
+            # Aggregate per-concept confidence from this session's attempts
+            attempts = (
+                db.query(QuizAttempt)
+                .filter(QuizAttempt.session_id == session.id)
+                .all()
+            )
+            concept_scores: dict[str, list[float]] = {}
+            for attempt in attempts:
+                topic = attempt.concept or "general"
+                concept_scores.setdefault(topic, []).append(attempt.confidence_score or 0.0)
+
+            # Upsert Progress rows (query-then-update because no unique DB constraint)
+            for topic, scores in concept_scores.items():
+                strength = round(sum(scores) / len(scores), 4)
+                existing = (
+                    db.query(Progress)
+                    .filter(
+                        Progress.user_id == session.user_id,
+                        Progress.doc_id == session.doc_id,
+                        Progress.topic == topic,
+                    )
+                    .first()
+                )
+                if existing:
+                    # Simple exponential moving average: blend old and new equally
+                    existing.strength_score = round((existing.strength_score + strength) / 2, 4)
+                else:
+                    db.add(
+                        Progress(
+                            user_id=session.user_id,
+                            doc_id=session.doc_id,
+                            topic=topic,
+                            strength_score=strength,
+                        )
+                    )
+
             db.commit()
     finally:
         db.close()

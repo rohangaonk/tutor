@@ -106,6 +106,39 @@ export interface QuizReport {
   concepts: QuizReportConcept[];
 }
 
+export interface QuizSession {
+  session_id: string;
+  doc_id: string;
+  doc_name: string;
+  created_at: string;
+  score: number;
+  questions_asked: number;
+  completed: boolean;
+}
+
+export async function listQuizSessions(): Promise<QuizSession[]> {
+  const res = await fetch(`${API_BASE}/quiz/sessions/${USER_ID}`);
+  if (!res.ok) throw new Error(`Sessions fetch failed: ${res.statusText}`);
+  return res.json();
+}
+
+export interface QuizAttempt {
+  id: string;
+  question: string;
+  user_answer: string;
+  correct: boolean;
+  concept: string | null;
+  ai_feedback: string | null;
+  confidence_score: number;
+  difficulty_level: string | null;
+}
+
+export async function listQuizAttempts(sessionId: string): Promise<QuizAttempt[]> {
+  const res = await fetch(`${API_BASE}/quiz/${sessionId}/attempts`);
+  if (!res.ok) throw new Error(`Attempts fetch failed: ${res.statusText}`);
+  return res.json();
+}
+
 export async function getQuizReport(sessionId: string): Promise<QuizReport> {
   const res = await fetch(`${API_BASE}/quiz/${sessionId}/report`);
   if (!res.ok) throw new Error(`Report fetch failed: ${res.statusText}`);
@@ -135,6 +168,36 @@ export async function submitAnswer(
     body: JSON.stringify({ session_id: sessionId, answer }),
   });
   if (!res.ok) throw new Error(`Quiz answer failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Progress
+// ---------------------------------------------------------------------------
+
+export interface TopicStrength {
+  topic: string;
+  strength_score: number;
+  updated_at: string;
+}
+
+export interface DocumentProgress {
+  doc_id: string;
+  doc_name: string;
+  sessions_completed: number;
+  avg_session_score: number;
+  topics: TopicStrength[];
+}
+
+export interface ProgressResponse {
+  user_id: string;
+  documents: DocumentProgress[];
+  overall_strength: number;
+}
+
+export async function getProgress(): Promise<ProgressResponse> {
+  const res = await fetch(`${API_BASE}/progress/${USER_ID}`);
+  if (!res.ok) throw new Error(`Progress fetch failed: ${res.statusText}`);
   return res.json();
 }
 
