@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from api.deps import get_current_user
 from common.db import get_db
 from common.models import Document, QuizAttempt, QuizSession
 
@@ -24,7 +25,6 @@ router = APIRouter(prefix="/quiz", tags=["quiz"])
 
 class StartRequest(BaseModel):
     doc_id: str
-    user_id: str
     max_questions: int = 5
 
 
@@ -73,6 +73,7 @@ def start_quiz(
     body: StartRequest,
     request: Request,
     db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
 ):
     graph = _get_graph(request)
     session_id = str(uuid.uuid4())
@@ -80,7 +81,7 @@ def start_quiz(
     # Persist the session row up-front
     session = QuizSession(
         id=uuid.UUID(session_id),
-        user_id=uuid.UUID(body.user_id),
+        user_id=current_user,
         doc_id=uuid.UUID(body.doc_id),
         state_json={},
     )
@@ -89,7 +90,7 @@ def start_quiz(
 
     initial_state = {
         "doc_id": body.doc_id,
-        "user_id": body.user_id,
+        "user_id": str(current_user),
         "session_id": session_id,
         "max_questions": body.max_questions,
         "questions_asked": 0,
@@ -181,24 +182,22 @@ def submit_answer(
     )
 
 
-@router.get("/sessions/{user_id}")
-def list_sessions(user_id: str, db: Session = Depends(get_db)):
-    """Return completed quiz sessions for a user, newest first."""
-    try:
-        uid = uuid.UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
+@router.get("/sessions")
+def list_sessions(
+    db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
+):
+    """Return completed quiz sessions for the current user, newest first."""
     sessions = (
         db.query(QuizSession)
-        .filter(QuizSession.user_id == uid)
+        .filter(QuizSession.user_id == current_user)
         .order_by(QuizSession.created_at.desc())
         .all()
     )
 
     result = []
     for s in sessions:
-        completed = bool(s.state_json.get("completed", False)) if s.state_json else False
+        completed = bool((s.state_json or {}).get("completed", False))
         doc = db.get(Document, s.doc_id)
         result.append({
             "session_id": str(s.id),

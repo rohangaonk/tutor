@@ -12,8 +12,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from common.db import get_db
+from api.deps import get_current_user
 from api.rag import build_rag_chain, retrieve_context
+from common.db import get_db
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -30,7 +31,6 @@ _rag_chain = build_rag_chain()
 class ChatRequest(BaseModel):
     question: str
     document_id: uuid.UUID
-    user_id: uuid.UUID
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,11 @@ class ChatRequest(BaseModel):
 
 
 @router.post("", summary="Ask a question against an uploaded document (streaming SSE)")
-async def chat(body: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
+async def chat(
+    body: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
+) -> StreamingResponse:
     """Answer a question grounded in the specified document.
 
     The response is streamed as Server-Sent Events (SSE).  Each event carries

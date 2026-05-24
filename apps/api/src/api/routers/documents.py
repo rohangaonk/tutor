@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.deps import get_current_user
 from common.db import get_db
 from common.models import Document
 
@@ -20,12 +21,15 @@ class DocumentOut(BaseModel):
     created_at: datetime
 
 
-@router.get("/{user_id}", response_model=list[DocumentOut])
-def list_documents(user_id: uuid.UUID, db: Session = Depends(get_db)) -> list[DocumentOut]:
-    """Return all documents for the given user, newest first."""
+@router.get("", response_model=list[DocumentOut])
+def list_documents(
+    db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
+) -> list[DocumentOut]:
+    """Return all documents for the current user, newest first."""
     docs = (
         db.query(Document)
-        .filter(Document.user_id == user_id)
+        .filter(Document.user_id == current_user)
         .order_by(Document.created_at.desc())
         .all()
     )

@@ -1,8 +1,63 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-// Hardcoded until auth is built (Phase 6 step 1)
-export const USER_ID = "550e8400-e29b-41d4-a716-446655440000";
+// ---------------------------------------------------------------------------
+// Auth token helpers (stored in localStorage)
+// ---------------------------------------------------------------------------
+
+const TOKEN_KEY = "tutor_token";
+const EMAIL_KEY = "tutor_email";
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string, email: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(EMAIL_KEY, email);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(EMAIL_KEY);
+}
+
+export function getStoredEmail(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(EMAIL_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function signup(email: string, password: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string };
+    throw new Error(err.detail ?? "Signup failed");
+  }
+}
+
+export async function signin(email: string, password: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string };
+    throw new Error(err.detail ?? "Sign in failed");
+  }
+  const data = await res.json() as { access_token: string };
+  setToken(data.access_token, email);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,7 +75,9 @@ export interface Document {
 // ---------------------------------------------------------------------------
 
 export async function listDocuments(): Promise<Document[]> {
-  const res = await fetch(`${API_BASE}/documents/${USER_ID}`);
+  const res = await fetch(`${API_BASE}/documents`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Failed to list documents: ${res.statusText}`);
   return res.json();
 }
@@ -35,8 +92,8 @@ export async function presignUpload(
 ): Promise<{ presigned_url: string; s3_key: string }> {
   const res = await fetch(`${API_BASE}/upload/presign`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, content_type: contentType, user_id: USER_ID }),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ filename, content_type: contentType }),
   });
   if (!res.ok) throw new Error(`Presign failed: ${res.statusText}`);
   return res.json();
@@ -60,8 +117,8 @@ export async function confirmUpload(
 ): Promise<{ document_id: string }> {
   const res = await fetch(`${API_BASE}/upload/confirm`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, s3_key: s3Key, user_id: USER_ID }),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ filename, s3_key: s3Key }),
   });
   if (!res.ok) throw new Error(`Confirm failed: ${res.statusText}`);
   return res.json();
@@ -117,7 +174,9 @@ export interface QuizSession {
 }
 
 export async function listQuizSessions(): Promise<QuizSession[]> {
-  const res = await fetch(`${API_BASE}/quiz/sessions/${USER_ID}`);
+  const res = await fetch(`${API_BASE}/quiz/sessions`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Sessions fetch failed: ${res.statusText}`);
   return res.json();
 }
@@ -134,13 +193,17 @@ export interface QuizAttempt {
 }
 
 export async function listQuizAttempts(sessionId: string): Promise<QuizAttempt[]> {
-  const res = await fetch(`${API_BASE}/quiz/${sessionId}/attempts`);
+  const res = await fetch(`${API_BASE}/quiz/${sessionId}/attempts`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Attempts fetch failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getQuizReport(sessionId: string): Promise<QuizReport> {
-  const res = await fetch(`${API_BASE}/quiz/${sessionId}/report`);
+  const res = await fetch(`${API_BASE}/quiz/${sessionId}/report`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Report fetch failed: ${res.statusText}`);
   return res.json();
 }
@@ -151,8 +214,8 @@ export async function startQuiz(
 ): Promise<QuizStartResponse> {
   const res = await fetch(`${API_BASE}/quiz/start`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ doc_id: docId, user_id: USER_ID, max_questions: maxQuestions }),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ doc_id: docId, max_questions: maxQuestions }),
   });
   if (!res.ok) throw new Error(`Quiz start failed: ${res.statusText}`);
   return res.json();
@@ -164,7 +227,7 @@ export async function submitAnswer(
 ): Promise<QuizAnswerResponse> {
   const res = await fetch(`${API_BASE}/quiz/answer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ session_id: sessionId, answer }),
   });
   if (!res.ok) throw new Error(`Quiz answer failed: ${res.statusText}`);
@@ -196,7 +259,9 @@ export interface ProgressResponse {
 }
 
 export async function getProgress(): Promise<ProgressResponse> {
-  const res = await fetch(`${API_BASE}/progress/${USER_ID}`);
+  const res = await fetch(`${API_BASE}/progress/me`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Progress fetch failed: ${res.statusText}`);
   return res.json();
 }
@@ -211,11 +276,10 @@ export async function* streamChat(
 ): AsyncGenerator<string> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       question,
       document_id: documentId,
-      user_id: USER_ID,
     }),
   });
 

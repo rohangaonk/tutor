@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     s3_bucket: str = "tutor-uploads-local"
     sqs_queue_url: str = "http://localhost:4566/000000000000/tutor-ingestion-local"
 
+    # Cognito
+    cognito_user_pool_id: str = ""
+    cognito_client_id: str = ""
+    cognito_region: str = "us-east-1"
+    cognito_endpoint_url: str | None = None  # set to http://localhost:4566 locally
+
     # LLM providers
     llm_provider: str = "groq"  # primary provider: "groq" or "openrouter"
     groq_api_key: str = ""

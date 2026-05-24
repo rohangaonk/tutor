@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.deps import get_current_user
 from common.config import settings
 from common.db import get_db
 from common.models import Document, DocumentStatus
@@ -38,7 +39,6 @@ def get_celery_app() -> Celery:
 class PresignRequest(BaseModel):
     filename: str
     content_type: str
-    user_id: uuid.UUID
 
 
 class PresignResponse(BaseModel):
@@ -49,7 +49,6 @@ class PresignResponse(BaseModel):
 class ConfirmRequest(BaseModel):
     s3_key: str
     filename: str
-    user_id: uuid.UUID
 
 
 class ConfirmResponse(BaseModel):
@@ -57,9 +56,12 @@ class ConfirmResponse(BaseModel):
 
 
 @router.post("/presign", response_model=PresignResponse)
-def presign_upload(body: PresignRequest) -> PresignResponse:
+def presign_upload(
+    body: PresignRequest,
+    current_user: uuid.UUID = Depends(get_current_user),
+) -> PresignResponse:
     s3 = get_s3_client()
-    s3_key = f"{body.user_id}/{uuid.uuid4()}/{body.filename}"
+    s3_key = f"{current_user}/{uuid.uuid4()}/{body.filename}"
     try:
         presigned_url = s3.generate_presigned_url(
             "put_object",
@@ -82,18 +84,10 @@ def presign_upload(body: PresignRequest) -> PresignResponse:
 def confirm_upload(
     body: ConfirmRequest,
     db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
 ) -> ConfirmResponse:
-    from common.models import User
-
-    user = db.get(User, body.user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User {body.user_id} not found.",
-        )
-
     doc = Document(
-        user_id=body.user_id,
+        user_id=current_user,
         name=body.filename,
         s3_key=body.s3_key,
         status=DocumentStatus.pending,

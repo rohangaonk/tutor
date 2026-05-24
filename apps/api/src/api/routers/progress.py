@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.deps import get_current_user
 from common.db import get_db
 from common.models import Document, Progress, QuizSession
 
@@ -33,8 +34,12 @@ class ProgressResponse(BaseModel):
     overall_strength: float
 
 
-@router.get("/{user_id}", response_model=ProgressResponse)
-def get_progress(user_id: uuid.UUID, db: Session = Depends(get_db)):
+@router.get("/me", response_model=ProgressResponse)
+def get_progress(
+    db: Session = Depends(get_db),
+    current_user: uuid.UUID = Depends(get_current_user),
+):
+    user_id = current_user
     progress_rows = (
         db.query(Progress)
         .filter(Progress.user_id == user_id)
