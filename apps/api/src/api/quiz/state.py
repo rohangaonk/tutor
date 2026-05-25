@@ -9,6 +9,7 @@ class QuizState(TypedDict):
     user_id: str
     session_id: str
     max_questions: int
+    document_topics: list[str]  # canonical topics extracted during ingestion
 
     # ── Progress ───────────────────────────────────────────────────────────
     questions_asked: int
@@ -24,6 +25,7 @@ class QuizState(TypedDict):
 
     # ── Current question cycle ─────────────────────────────────────────────
     retrieved_context: str           # formatted MMR chunks
+    current_topic: str               # predefined topic selected for this question
     current_question: str
     current_concept: str
     current_question_embedding: list[float]

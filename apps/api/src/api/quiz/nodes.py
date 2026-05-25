@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import re
 import uuid
 
@@ -48,17 +47,18 @@ You are a quiz question generator for a tutoring system.
 Document context:
 {context}
 
+Topic to assess: {topic}
 Difficulty: {difficulty}
-Already covered concepts (do NOT generate a question on any of these): {asked_concepts}
+Already covered questions on this topic (avoid repetition): {asked_on_topic}
 
 Generate ONE {difficulty}-level question that:
 1. Can be answered from the context above only.
-2. Tests a DIFFERENT concept from the already-covered list.
+2. Is specifically about the topic: "{topic}".
 3. Has a clear, unambiguous answer.
 4. Explores a unique angle — vary the style (definition, application, comparison, cause-effect, example).
 
 Respond with valid JSON only — no markdown fences:
-{{"question": "<your question>", "concept": "<short topic tag, 1-4 words>"}}"""
+{{"question": "<your question>", "concept": "{topic}"}}"""
 
 _EVALUATE_PROMPT = """\
 You are evaluating a student's answer to a quiz question.
@@ -70,7 +70,9 @@ Student's answer: {user_answer}
 Respond with valid JSON only — no markdown fences:
 {{"feedback": "<2-4 sentences evaluating the student's response>", "correct_answer": "<the correct answer extracted from the context, 1-3 sentences>", "confidence_score": <0.0-1.0>, "is_correct": <true|false>}}
 
-confidence_score guide: 1.0 = perfect, 0.7 = mostly correct, 0.4 = partial, 0.0 = wrong."""
+confidence_score must represent how correct the student's answer is (not evaluator certainty).
+Scoring guide: 1.0 = perfect, 0.7 = mostly correct, 0.4 = partial, 0.0 = wrong.
+If is_correct is false, confidence_score must be <= 0.49."""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -101,6 +103,29 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group())
 
 
+def _coerce_bool(value: object) -> bool:
+    """Parse booleans robustly from JSON values that may be strings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+    raise ValueError(f"Could not parse boolean value: {value!r}")
+
+
+def _normalize_confidence_score(score: float, is_correct: bool) -> float:
+    """Keep confidence in expected range and consistent with correctness flag."""
+    bounded = max(0.0, min(1.0, score))
+    if not is_correct:
+        return min(bounded, 0.49)
+    return bounded
+
+
 def _call_llm_generate(prompt: str) -> str:
     """High temperature for creative, varied question generation."""
     llm = _get_llm("rag", temperature=0.9)
@@ -116,13 +141,23 @@ def _call_llm_evaluate(prompt: str) -> str:
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
 def retrieve_context(state: QuizState) -> dict:
-    """Random-seeded chunk selection + MMR re-ranking for diversity across sessions.
+    """Select the current predefined topic, retrieve the most relevant chunks for it.
 
-    Uses the session_id + questions_asked as an RNG seed so:
-    - Different sessions → different chunk pools → different questions
-    - Within a session, each round picks a fresh random slice
+    Topic selection cycles round-robin through document_topics based on
+    questions_asked, ensuring every topic gets covered evenly across a session.
+    Uses MMR to keep retrieved context chunks diverse and reduce duplication.
+    Falls back to a generic retrieval seed when no predefined topics exist (legacy docs).
     """
     doc_id = uuid.UUID(state["doc_id"])
+    document_topics = state.get("document_topics") or []
+
+    # Pick the topic for this question cycle
+    if document_topics:
+        topic = document_topics[state["questions_asked"] % len(document_topics)]
+        query_seed = topic
+    else:
+        topic = ""
+        query_seed = "key facts and concepts"
 
     db = SessionLocal()
     try:
@@ -134,29 +169,26 @@ def retrieve_context(state: QuizState) -> dict:
         )
 
         if not all_chunks:
-            return {"retrieved_context": "", "retry_count": 0}
+            return {"retrieved_context": "", "current_topic": topic, "retry_count": 0}
 
-        # Seed with session_id + round so every quiz + every question gets a
-        # different starting pool while remaining deterministic for retries.
-        rng = random.Random(state["session_id"] + str(state["questions_asked"]))
-        fetch_k = min(20, len(all_chunks))
-        candidates = rng.sample(all_chunks, fetch_k)
+        # Embed the topic (or fallback seed) to retrieve relevant chunks
+        query_embedding = _embed_query(query_seed)
 
-        # MMR re-rank the random pool for intra-session diversity.
-        # Use a generic embedding so we're not biased toward any topic.
-        seed = "key facts and concepts"
-        query_embedding = _embed_query(seed)
-
-        # Run MMR directly on the in-memory candidates.
-        k = min(5, len(candidates))
-        if len(candidates) <= k:
-            selected = candidates
+        # MMR: retrieve k diverse chunks most relevant to the topic
+        k = min(5, len(all_chunks))
+        if len(all_chunks) <= k:
+            selected = all_chunks
         else:
-            selected_chunks = []
-            remaining = list(candidates)
+            selected_chunks: list[Chunk] = []
+            remaining = list(all_chunks)
             while len(selected_chunks) < k and remaining:
                 if not selected_chunks:
-                    selected_chunks.append(remaining.pop(0))
+                    # Seed with the highest-relevance chunk
+                    best_idx = max(
+                        range(len(remaining)),
+                        key=lambda i: _cosine_similarity(remaining[i].embedding, query_embedding),
+                    )
+                    selected_chunks.append(remaining.pop(best_idx))
                     continue
                 best_score = -float("inf")
                 best_idx = 0
@@ -177,15 +209,20 @@ def retrieve_context(state: QuizState) -> dict:
     finally:
         db.close()
 
-    return {"retrieved_context": context, "retry_count": 0}
+    return {"retrieved_context": context, "current_topic": topic, "retry_count": 0}
 
 
 def generate_question(state: QuizState) -> dict:
-    """LLM generates a question + concept tag; embeds the question for dedup check."""
+    """LLM generates a question constrained to the current predefined topic."""
+    current_topic = state.get("current_topic") or "general"
+    # Count how many questions have already been asked on this topic
+    prior_count = state["asked_concepts"].count(current_topic)
+    asked_on_topic = f"{prior_count} prior question(s) already asked on this topic" if prior_count else "none"
     prompt = _GENERATE_PROMPT.format(
         context=state["retrieved_context"],
+        topic=current_topic,
         difficulty=state["difficulty"],
-        asked_concepts=", ".join(state["asked_concepts"]) or "none",
+        asked_on_topic=asked_on_topic,
     )
 
     raw = ""
@@ -193,11 +230,12 @@ def generate_question(state: QuizState) -> dict:
         raw = _call_llm_generate(prompt)
         parsed = _parse_json(raw)
         question = parsed["question"]
-        concept = parsed["concept"]
+        # Always use the predefined topic as the concept for consistent grouping
+        concept = current_topic
     except Exception as exc:
         logger.warning("generate_question: LLM call/parse failed (%s) — using raw output", exc)
         question = raw.strip() or "What is the main concept covered in this document?"
-        concept = "general"
+        concept = current_topic
 
     embedding = _embed_query(question)
 
@@ -231,13 +269,14 @@ def evaluate_answer(state: QuizState) -> dict:
         user_answer=state["user_answer"],
     )
 
+    raw = ""
     try:
         raw = _call_llm_evaluate(prompt)
         parsed = _parse_json(raw)
         feedback = parsed["feedback"]
         correct_answer = parsed.get("correct_answer", "")
-        confidence_score = float(parsed["confidence_score"])
-        is_correct = bool(parsed["is_correct"])
+        is_correct = _coerce_bool(parsed["is_correct"])
+        confidence_score = _normalize_confidence_score(float(parsed["confidence_score"]), is_correct)
     except Exception as exc:
         logger.warning("evaluate_answer: LLM parse failed (%s)", exc)
         feedback = raw.strip()

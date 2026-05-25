@@ -88,11 +88,18 @@ def start_quiz(
     db.add(session)
     db.commit()
 
+    # Load predefined topics from the document (may be None for legacy docs)
+    doc = db.get(Document, uuid.UUID(body.doc_id))
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    document_topics: list[str] = doc.topics or []
+
     initial_state = {
         "doc_id": body.doc_id,
         "user_id": str(current_user),
         "session_id": session_id,
         "max_questions": body.max_questions,
+        "document_topics": document_topics,
         "questions_asked": 0,
         "difficulty": "medium",
         "total_score": 0.0,
@@ -102,6 +109,7 @@ def start_quiz(
         "asked_question_embeddings": [],
         "retry_count": 0,
         "retrieved_context": "",
+        "current_topic": "",
         "current_question": "",
         "current_concept": "",
         "current_question_embedding": [],
