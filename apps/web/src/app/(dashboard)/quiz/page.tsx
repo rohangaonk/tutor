@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Document,
   listDocuments,
@@ -14,6 +15,35 @@ import {
   QuizSession,
   QuizAttempt,
 } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  CheckCircle2,
+  XCircle,
+  Trophy,
+  ChevronDown,
+  ChevronUp,
+  Upload,
+  Loader2,
+  ArrowRight,
+  RotateCcw,
+  BookOpen,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 type Phase = "pick" | "loading" | "question" | "feedback" | "done" | "error";
 
@@ -36,16 +66,21 @@ interface FeedbackState {
   nextDifficulty: string;
 }
 
-const DIFFICULTY_COLOUR: Record<string, string> = {
-  easy: "text-green-400",
-  medium: "text-yellow-400",
-  hard: "text-red-400",
+const DIFFICULTY_BADGE: Record<string, string> = {
+  easy: "bg-green-500/10 text-green-600 border-green-500/20",
+  medium: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+  hard: "bg-red-500/10 text-red-600 border-red-500/20",
 };
+
+function ScoreBadge({ score, className }: { score: number; className?: string }) {
+  const pct = Math.round(score * 100);
+  const color = pct >= 70 ? "text-green-600" : pct >= 40 ? "text-amber-600" : "text-red-600";
+  return <span className={cn("font-semibold tabular-nums", color, className)}>{pct}%</span>;
+}
 
 export default function QuizPage() {
   const [docs, setDocs] = useState<Document[]>([]);
-  const [docsError, setDocsError] = useState<string | null>(null);
-
+  const [docsLoading, setDocsLoading] = useState(true);
   const [pastSessions, setPastSessions] = useState<QuizSession[]>([]);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [sessionReports, setSessionReports] = useState<Record<string, QuizReport>>({});
@@ -54,54 +89,40 @@ export default function QuizPage() {
 
   const [phase, setPhase] = useState<Phase>("pick");
   const [error, setError] = useState<string | null>(null);
-
   const [selectedDocId, setSelectedDocId] = useState<string>("");
   const [maxQuestions, setMaxQuestions] = useState(5);
 
   const [quiz, setQuiz] = useState<QuizState | null>(null);
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [report, setReport] = useState<QuizReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
-
-  // Completed session summary
+  const [pendingAnswer, setPendingAnswer] = useState("");
   const [history, setHistory] = useState<
     { question: string; answer: string; isCorrect: boolean; feedback: string; correctAnswer: string }[]
   >([]);
-  const [pendingAnswer, setPendingAnswer] = useState<string>("");
 
   useEffect(() => {
     listDocuments()
       .then((all) => setDocs(all.filter((d) => d.status === "ready")))
-      .catch((e) => setDocsError(e.message));
+      .catch((e) => toast.error(e.message))
+      .finally(() => setDocsLoading(false));
     listQuizSessions()
       .then((all) => setPastSessions(all.filter((s) => s.completed)))
       .catch(() => {});
   }, []);
 
   async function handleExpandSession(sessionId: string) {
-    if (expandedSession === sessionId) {
-      setExpandedSession(null);
-      return;
-    }
+    if (expandedSession === sessionId) { setExpandedSession(null); return; }
     setExpandedSession(sessionId);
     setExpandedAttempt(null);
     const fetches: Promise<void>[] = [];
     if (!sessionReports[sessionId]) {
-      fetches.push(
-        getQuizReport(sessionId)
-          .then((r) => setSessionReports((prev) => ({ ...prev, [sessionId]: r })))
-          .catch(() => {})
-      );
+      fetches.push(getQuizReport(sessionId).then((r) => setSessionReports((p) => ({ ...p, [sessionId]: r }))).catch(() => {}));
     }
     if (!sessionAttempts[sessionId]) {
-      fetches.push(
-        listQuizAttempts(sessionId)
-          .then((a) => setSessionAttempts((prev) => ({ ...prev, [sessionId]: a })))
-          .catch(() => {})
-      );
+      fetches.push(listQuizAttempts(sessionId).then((a) => setSessionAttempts((p) => ({ ...p, [sessionId]: a }))).catch(() => {}));
     }
     await Promise.all(fetches);
   }
@@ -113,20 +134,14 @@ export default function QuizPage() {
     setHistory([]);
     try {
       const res = await startQuiz(selectedDocId, maxQuestions);
-      setQuiz({
-        sessionId: res.session_id,
-        question: res.question,
-        concept: res.concept,
-        difficulty: res.difficulty,
-        questionsAsked: 0,
-        maxQuestions,
-      });
+      setQuiz({ sessionId: res.session_id, question: res.question, concept: res.concept, difficulty: res.difficulty, questionsAsked: 0, maxQuestions });
       setAnswer("");
       setFeedback(null);
       setPhase("question");
-    } catch (e: unknown) {
+    } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
+      toast.error("Failed to start quiz");
     }
   }
 
@@ -136,7 +151,6 @@ export default function QuizPage() {
     setPendingAnswer(answer.trim());
     try {
       const res: QuizAnswerResponse = await submitAnswer(quiz.sessionId, answer.trim());
-
       const fb: FeedbackState = {
         feedback: res.feedback,
         correctAnswer: res.correct_answer,
@@ -147,34 +161,18 @@ export default function QuizPage() {
         nextDifficulty: res.difficulty,
       };
       setFeedback(fb);
-
-      setHistory((prev) => [
-        ...prev,
-        {
-          question: quiz.question,
-          answer: answer.trim(),
-          isCorrect: res.is_correct,
-          feedback: res.feedback,
-          correctAnswer: res.correct_answer,
-        },
-      ]);
-
+      setHistory((prev) => [...prev, { question: quiz.question, answer: answer.trim(), isCorrect: res.is_correct, feedback: res.feedback, correctAnswer: res.correct_answer }]);
       if (res.is_completed) {
         setPhase("done");
-        // Auto-fetch report
-        if (quiz) {
-          setReportLoading(true);
-          getQuizReport(quiz.sessionId)
-            .then(setReport)
-            .catch(() => setReport(null))
-            .finally(() => setReportLoading(false));
-        }
+        setReportLoading(true);
+        getQuizReport(quiz.sessionId).then(setReport).catch(() => setReport(null)).finally(() => setReportLoading(false));
       } else {
         setPhase("feedback");
       }
-    } catch (e: unknown) {
+    } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
+      toast.error("Failed to submit answer");
     } finally {
       setSubmitting(false);
     }
@@ -182,13 +180,7 @@ export default function QuizPage() {
 
   function handleNext() {
     if (!quiz || !feedback) return;
-    setQuiz({
-      ...quiz,
-      question: feedback.nextQuestion!,
-      concept: feedback.nextConcept ?? "",
-      difficulty: feedback.nextDifficulty,
-      questionsAsked: quiz.questionsAsked + 1,
-    });
+    setQuiz({ ...quiz, question: feedback.nextQuestion!, concept: feedback.nextConcept ?? "", difficulty: feedback.nextDifficulty, questionsAsked: quiz.questionsAsked + 1 });
     setAnswer("");
     setFeedback(null);
     setPendingAnswer("");
@@ -205,378 +197,392 @@ export default function QuizPage() {
     setHistory([]);
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center py-12 px-4">
-      <h1 className="text-3xl font-bold mb-8">Quiz</h1>
+    <div className="max-w-2xl w-full mx-auto space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold tracking-tight">Quiz</h1>
+        <p className="text-muted-foreground text-sm">
+          Test your understanding with adaptive questions based on your documents.
+        </p>
+      </div>
 
-      {/* ── Document picker ── */}
+      {/* ── Pick phase ── */}
       {phase === "pick" && (
-        <>
-        <div className="w-full max-w-md space-y-4">
-          {docsError && (
-            <p className="text-red-400 text-sm">{docsError}</p>
-          )}
-
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Document</label>
-            <select
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
-              value={selectedDocId}
-              onChange={(e) => setSelectedDocId(e.target.value)}
-            >
-              <option value="">— select a document —</option>
-              {docs.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              Questions ({maxQuestions})
-            </label>
-            <input
-              type="range"
-              min={3}
-              max={10}
-              value={maxQuestions}
-              onChange={(e) => setMaxQuestions(Number(e.target.value))}
-              className="w-full"
-            />
-          </div>
-
-          <button
-            onClick={handleStart}
-            disabled={!selectedDocId}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg py-2 font-medium transition-colors"
-          >
-            Start Quiz
-          </button>
-        </div>
-
-        {/* ── Past sessions ── */}
-        {pastSessions.length > 0 && (
-          <div className="w-full max-w-md mt-8 space-y-2">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Past sessions</p>
-            {pastSessions.map((s) => {
-              const isOpen = expandedSession === s.session_id;
-              const report = sessionReports[s.session_id];
-              const attempts = sessionAttempts[s.session_id];
-              const loading = isOpen && (!report || !attempts);
-              return (
-                <div key={s.session_id} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-                  <button
-                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-750 transition-colors text-left"
-                    onClick={() => handleExpandSession(s.session_id)}
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-gray-200">{s.doc_name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {new Date(s.created_at).toLocaleString()} · {s.questions_asked}Q · score {Math.round(s.score * 100)}%
-                      </p>
-                    </div>
-                    <span className="text-gray-500 text-xs">{isOpen ? "▲" : "▼"}</span>
-                  </button>
-
-                  {isOpen && (
-                    <div className="border-t border-gray-700 px-4 py-3 space-y-4">
-                      {loading && (
-                        <p className="text-xs text-gray-500 animate-pulse">Loading…</p>
-                      )}
-
-                      {/* Per-concept confidence table */}
-                      {report && report.concepts.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">By concept</p>
-                          <table className="w-full text-xs border-collapse">
-                            <thead>
-                              <tr className="text-left text-gray-500 border-b border-gray-700">
-                                <th className="pb-1 pr-3 font-normal">Concept</th>
-                                <th className="pb-1 pr-3 font-normal text-center">Correct</th>
-                                <th className="pb-1 font-normal text-center">Confidence</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {report.concepts.map((c) => (
-                                <tr key={c.concept} className="border-b border-gray-800">
-                                  <td className="py-1 pr-3 text-gray-300">{c.concept}</td>
-                                  <td className="py-1 pr-3 text-center text-gray-400">{c.correct}/{c.total}</td>
-                                  <td className="py-1 text-center">
-                                    <span className={c.avg_confidence >= 0.7 ? "text-green-400" : c.avg_confidence >= 0.4 ? "text-yellow-400" : "text-red-400"}>
-                                      {Math.round(c.avg_confidence * 100)}%
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* Individual questions */}
-                      {attempts && attempts.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Questions</p>
-                          <div className="space-y-1">
-                            {attempts.map((a, i) => {
-                              const isExpanded = expandedAttempt === a.id;
-                              return (
-                                <div key={a.id} className="rounded-lg border border-gray-700 overflow-hidden">
-                                  <button
-                                    className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-gray-700 transition-colors"
-                                    onClick={() => setExpandedAttempt(isExpanded ? null : a.id)}
-                                  >
-                                    <span className={`mt-0.5 text-xs font-bold shrink-0 ${a.correct ? "text-green-400" : "text-red-400"}`}>
-                                      {a.correct ? "✓" : "✗"}
-                                    </span>
-                                    <span className="text-xs text-gray-300 flex-1">{i + 1}. {a.question}</span>
-                                    <span className="text-xs text-gray-500 shrink-0">{Math.round(a.confidence_score * 100)}%</span>
-                                  </button>
-
-                                  {isExpanded && (
-                                    <div className="border-t border-gray-700 px-3 py-2 space-y-2 bg-gray-900/50">
-                                      <div>
-                                        <p className="text-xs text-gray-500 mb-0.5">Your answer</p>
-                                        <p className="text-xs text-gray-300 italic">{a.user_answer}</p>
-                                      </div>
-                                      {a.ai_feedback && (
-                                        <div>
-                                          <p className="text-xs text-gray-500 mb-0.5">Feedback</p>
-                                          <p className="text-xs text-gray-300 leading-relaxed">{a.ai_feedback}</p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base">Start a new quiz</CardTitle>
+              <CardDescription>Choose a document and how many questions you want</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {docsLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-10 w-full" />
                 </div>
-              );
-            })}
-          </div>
-        )}
-        </>
+              ) : docs.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <BookOpen className="h-8 w-8 text-muted-foreground/50" />
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">No documents ready</p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">Upload a document first to start quizzing</p>
+                  </div>
+                  <Button asChild variant="outline" size="sm">
+                    <Link href="/upload"><Upload className="mr-1.5 h-3.5 w-3.5" /> Upload document</Link>
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Document</Label>
+                    <Select value={selectedDocId} onValueChange={setSelectedDocId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a document…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {docs.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label>Number of questions</Label>
+                      <span className="text-sm font-semibold tabular-nums">{maxQuestions}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={3}
+                      max={10}
+                      value={maxQuestions}
+                      onChange={(e) => setMaxQuestions(Number(e.target.value))}
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>3</span><span>10</span>
+                    </div>
+                  </div>
+
+                  <Button onClick={handleStart} disabled={!selectedDocId} className="w-full">
+                    Start Quiz
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Past sessions */}
+          {pastSessions.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Past sessions</h2>
+              {pastSessions.map((s) => {
+                const isOpen = expandedSession === s.session_id;
+                const rep = sessionReports[s.session_id];
+                const attempts = sessionAttempts[s.session_id];
+                const isLoading = isOpen && (!rep || !attempts);
+                return (
+                  <Card key={s.session_id} className="overflow-hidden">
+                    <button
+                      className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/40 transition-colors text-left"
+                      onClick={() => handleExpandSession(s.session_id)}
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{s.doc_name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {new Date(s.created_at).toLocaleDateString()} · {s.questions_asked} questions ·{" "}
+                          <ScoreBadge score={s.score} />
+                        </p>
+                      </div>
+                      {isOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t px-5 py-4 space-y-4">
+                        {isLoading && (
+                          <div className="space-y-2">
+                            <Skeleton className="h-3 w-full" />
+                            <Skeleton className="h-3 w-4/5" />
+                          </div>
+                        )}
+
+                        {rep && rep.concepts.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">By concept</p>
+                            <div className="divide-y rounded-lg border overflow-hidden">
+                              {rep.concepts.map((c) => (
+                                <div key={c.concept} className="flex items-center justify-between px-3 py-2 text-xs">
+                                  <span className="font-medium">{c.concept}</span>
+                                  <div className="flex items-center gap-3 text-muted-foreground">
+                                    <span>{c.correct}/{c.total}</span>
+                                    <ScoreBadge score={c.avg_confidence} className="text-xs" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {attempts && attempts.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Questions</p>
+                            {attempts.map((a, i) => (
+                              <div key={a.id} className="rounded-lg border overflow-hidden">
+                                <button
+                                  className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-muted/40 transition-colors"
+                                  onClick={() => setExpandedAttempt(expandedAttempt === a.id ? null : a.id)}
+                                >
+                                  {a.correct
+                                    ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0 mt-0.5" />
+                                    : <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
+                                  }
+                                  <span className="flex-1 text-xs">{i + 1}. {a.question}</span>
+                                  <span className="text-xs text-muted-foreground">{Math.round(a.confidence_score * 100)}%</span>
+                                </button>
+                                {expandedAttempt === a.id && (
+                                  <div className="border-t bg-muted/20 px-3 py-2.5 space-y-2 text-xs">
+                                    <div>
+                                      <p className="text-muted-foreground mb-0.5">Your answer</p>
+                                      <p className="italic">{a.user_answer}</p>
+                                    </div>
+                                    {a.ai_feedback && (
+                                      <div>
+                                        <p className="text-muted-foreground mb-0.5">Feedback</p>
+                                        <p className="leading-relaxed">{a.ai_feedback}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Loading ── */}
       {phase === "loading" && (
-        <p className="text-gray-400 animate-pulse">Generating first question…</p>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-4 py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Generating your first question…</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Error ── */}
+      {phase === "error" && (
+        <Card className="border-destructive/50">
+          <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
+            <XCircle className="h-8 w-8 text-destructive" />
+            <div>
+              <p className="font-medium text-sm">Something went wrong</p>
+              <p className="text-xs text-muted-foreground mt-1">{error}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleReset}>
+              <RotateCcw className="mr-2 h-3.5 w-3.5" /> Try again
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       {/* ── Question ── */}
       {phase === "question" && quiz && (
-        <div className="w-full max-w-2xl space-y-5">
-          <div className="flex justify-between text-xs text-gray-500">
-            <span>
-              Question {quiz.questionsAsked + 1} / {quiz.maxQuestions}
-            </span>
-            <span>
-              Concept:{" "}
-              <span className="text-gray-300">{quiz.concept || "—"}</span>
-              {"  "}·{"  "}
-              Difficulty:{" "}
-              <span className={DIFFICULTY_COLOUR[quiz.difficulty] ?? "text-gray-300"}>
-                {quiz.difficulty}
-              </span>
-            </span>
+        <div className="space-y-4">
+          {/* Progress */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Question {quiz.questionsAsked + 1} of {quiz.maxQuestions}</span>
+              <div className="flex items-center gap-2">
+                {quiz.concept && <span className="font-medium text-foreground">{quiz.concept}</span>}
+                {quiz.difficulty && (
+                  <Badge variant="outline" className={cn("text-xs px-2 py-0", DIFFICULTY_BADGE[quiz.difficulty])}>
+                    {quiz.difficulty}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <Progress value={((quiz.questionsAsked) / quiz.maxQuestions) * 100} className="h-1.5" />
           </div>
 
-          <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 text-base leading-relaxed">
-            {quiz.question}
-          </div>
-
-          <textarea
-            rows={4}
-            placeholder="Type your answer…"
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && e.ctrlKey) handleSubmit();
-            }}
-            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-
-          <button
-            onClick={handleSubmit}
-            disabled={!answer.trim() || submitting}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg py-2 font-medium transition-colors"
-          >
-            {submitting ? "Evaluating…" : "Submit Answer"}
-          </button>
-          <p className="text-xs text-gray-600 text-center">Ctrl + Enter to submit</p>
+          {/* Question card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-medium leading-relaxed">{quiz.question}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Textarea
+                rows={4}
+                placeholder="Type your answer… (Ctrl+Enter to submit)"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) handleSubmit(); }}
+                className="resize-none"
+              />
+              <Button onClick={handleSubmit} disabled={!answer.trim() || submitting} className="w-full">
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {submitting ? "Evaluating…" : "Submit Answer"}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       {/* ── Feedback ── */}
       {phase === "feedback" && quiz && feedback && (
-        <div className="w-full max-w-2xl space-y-5">
-          <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 space-y-3">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Your answer</p>
-            <p className="text-sm text-gray-300 italic">{pendingAnswer}</p>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Question {quiz.questionsAsked + 1} of {quiz.maxQuestions}</span>
+            </div>
+            <Progress value={((quiz.questionsAsked + 1) / quiz.maxQuestions) * 100} className="h-1.5" />
           </div>
 
-          <div
-            className={`rounded-xl p-5 border ${
-              feedback.isCorrect
-                ? "bg-green-900/30 border-green-700"
-                : "bg-red-900/30 border-red-700"
-            } space-y-2`}
-          >
-            <p className="font-semibold">
-              {feedback.isCorrect ? "✓ Correct" : "✗ Incorrect"}
-              <span className="ml-3 text-sm font-normal text-gray-400">
-                confidence {Math.round(feedback.confidence * 100)}%
-              </span>
-            </p>
-            <p className="text-sm text-gray-200 leading-relaxed">{feedback.feedback}</p>
-            {feedback.correctAnswer && (
-              <div className="mt-2 pt-2 border-t border-gray-600">
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Correct answer</p>
-                <p className="text-sm text-blue-300 leading-relaxed">{feedback.correctAnswer}</p>
+          {/* Your answer */}
+          <Card className="bg-muted/30">
+            <CardContent className="py-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your answer</p>
+              <p className="text-sm italic">{pendingAnswer}</p>
+            </CardContent>
+          </Card>
+
+          {/* Feedback */}
+          <Card className={cn("border-2", feedback.isCorrect ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5")}>
+            <CardContent className="py-5 space-y-3">
+              <div className="flex items-center gap-2">
+                {feedback.isCorrect
+                  ? <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+                  : <XCircle className="h-5 w-5 text-red-500 shrink-0" />
+                }
+                <span className="font-semibold text-sm">
+                  {feedback.isCorrect ? "Correct!" : "Not quite"}
+                </span>
+                <Badge variant="outline" className="ml-auto text-xs px-2 py-0">
+                  {Math.round(feedback.confidence * 100)}% confidence
+                </Badge>
               </div>
-            )}
-          </div>
+              <p className="text-sm leading-relaxed">{feedback.feedback}</p>
+              {feedback.correctAnswer && (
+                <>
+                  <Separator />
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5">Correct answer</p>
+                    <p className="text-sm leading-relaxed text-blue-600 dark:text-blue-400">{feedback.correctAnswer}</p>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-          <button
-            onClick={handleNext}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 rounded-lg py-2 font-medium transition-colors"
-          >
-            Next Question →
-          </button>
+          <Button onClick={handleNext} className="w-full">
+            Next Question <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
         </div>
       )}
 
       {/* ── Done ── */}
       {phase === "done" && feedback && (
-        <div className="w-full max-w-2xl space-y-6">
-          <div className="text-center">
-            <p className="text-2xl font-bold mb-1">Quiz complete!</p>
-            <p className="text-gray-400 text-sm">
-              Final answer — confidence {Math.round(feedback.confidence * 100)}%
-            </p>
-          </div>
-
-          {/* Last answer feedback */}
-          <div
-            className={`rounded-xl p-5 border ${
-              feedback.isCorrect
-                ? "bg-green-900/30 border-green-700"
-                : "bg-red-900/30 border-red-700"
-            } space-y-2`}
-          >
-            <p className="font-semibold">
-              {feedback.isCorrect ? "✓ Correct" : "✗ Incorrect"}
-            </p>
-            <p className="text-sm text-gray-200 leading-relaxed">{feedback.feedback}</p>
-            {feedback.correctAnswer && (
-              <div className="mt-2 pt-2 border-t border-gray-600">
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Correct answer</p>
-                <p className="text-sm text-blue-300 leading-relaxed">{feedback.correctAnswer}</p>
+        <div className="space-y-5">
+          {/* Hero */}
+          <Card className="text-center">
+            <CardContent className="py-8 space-y-3">
+              <div className="flex justify-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10">
+                  <Trophy className="h-8 w-8 text-amber-500" />
+                </div>
               </div>
-            )}
-          </div>
+              <div>
+                <h2 className="text-xl font-bold">Quiz complete!</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  You answered {history.filter((h) => h.isCorrect).length} of {history.length} questions correctly.
+                </p>
+              </div>
+              <Progress
+                value={(history.filter((h) => h.isCorrect).length / history.length) * 100}
+                className="h-2 max-w-xs mx-auto"
+              />
+            </CardContent>
+          </Card>
 
-          {/* Per-concept report */}
-          <div className="space-y-2">
-            <p className="text-sm text-gray-500 uppercase tracking-wide">Performance by concept</p>
-            {reportLoading && (
-              <p className="text-gray-500 text-sm animate-pulse">Loading report…</p>
-            )}
-            {!reportLoading && report && report.concepts.length > 0 && (
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="text-left text-gray-500 border-b border-gray-700">
-                    <th className="pb-2 pr-4 font-normal">Concept</th>
-                    <th className="pb-2 pr-4 font-normal text-center">Correct</th>
-                    <th className="pb-2 pr-4 font-normal text-center">Accuracy</th>
-                    <th className="pb-2 font-normal text-center">Avg confidence</th>
-                  </tr>
-                </thead>
-                <tbody>
+          {/* Last feedback */}
+          <Card className={cn("border-2", feedback.isCorrect ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5")}>
+            <CardContent className="py-4 space-y-2">
+              <div className="flex items-center gap-2">
+                {feedback.isCorrect ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />}
+                <span className="text-sm font-medium">Last question: {feedback.isCorrect ? "Correct" : "Incorrect"}</span>
+              </div>
+              <p className="text-sm leading-relaxed">{feedback.feedback}</p>
+            </CardContent>
+          </Card>
+
+          {/* Concept report */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Performance by concept</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {reportLoading && (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-4/5" />
+                </div>
+              )}
+              {!reportLoading && report && report.concepts.length > 0 && (
+                <div className="divide-y rounded-lg border overflow-hidden">
                   {report.concepts.map((c) => (
-                    <tr key={c.concept} className="border-b border-gray-800">
-                      <td className="py-2 pr-4 text-gray-200">{c.concept}</td>
-                      <td className="py-2 pr-4 text-center">
-                        {c.correct}/{c.total}
-                      </td>
-                      <td className="py-2 pr-4 text-center">
-                        <span
-                          className={
-                            c.accuracy >= 0.7
-                              ? "text-green-400"
-                              : c.accuracy >= 0.4
-                              ? "text-yellow-400"
-                              : "text-red-400"
-                          }
-                        >
-                          {Math.round(c.accuracy * 100)}%
-                        </span>
-                      </td>
-                      <td className="py-2 text-center text-gray-300">
-                        {Math.round(c.avg_confidence * 100)}%
-                      </td>
-                    </tr>
+                    <div key={c.concept} className="px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{c.concept}</span>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{c.correct}/{c.total}</span>
+                          <ScoreBadge score={c.accuracy} className="text-xs" />
+                        </div>
+                      </div>
+                      <Progress value={c.accuracy * 100} className="h-1" />
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            )}
-            {!reportLoading && report && report.concepts.length === 0 && (
-              <p className="text-gray-500 text-sm">No concept data available.</p>
-            )}
-          </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* History */}
-          <div className="space-y-3">
-            <p className="text-sm text-gray-500 uppercase tracking-wide">Session recap</p>
+          {/* Session recap */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Session recap</h3>
             {history.map((h, i) => (
-              <div
-                key={i}
-                className={`rounded-lg p-4 border text-sm space-y-1 ${
-                  h.isCorrect
-                    ? "border-green-800 bg-green-900/20"
-                    : "border-red-800 bg-red-900/20"
-                }`}
-              >
-                <p className="text-gray-300 font-medium">Q{i + 1}: {h.question}</p>
-                <p className="text-gray-400 italic">Your answer: {h.answer}</p>
-                <p className="text-gray-300">{h.feedback}</p>
-                {h.correctAnswer && (
-                  <p className="text-blue-300 text-xs mt-1">
-                    <span className="text-gray-500">Correct: </span>{h.correctAnswer}
-                  </p>
-                )}
-              </div>
+              <Card key={i} className={cn("border", h.isCorrect ? "border-green-500/30" : "border-red-500/30")}>
+                <CardContent className="py-3 space-y-1.5">
+                  <div className="flex items-start gap-2">
+                    {h.isCorrect ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0 mt-0.5" /> : <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />}
+                    <p className="text-sm font-medium">{h.question}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground italic pl-5">Your answer: {h.answer}</p>
+                  {!h.isCorrect && h.correctAnswer && (
+                    <p className="text-xs text-blue-600 dark:text-blue-400 pl-5">Correct: {h.correctAnswer}</p>
+                  )}
+                </CardContent>
+              </Card>
             ))}
           </div>
 
-          <button
-            onClick={handleReset}
-            className="w-full bg-gray-700 hover:bg-gray-600 rounded-lg py-2 font-medium transition-colors"
-          >
-            Start another quiz
-          </button>
-        </div>
-      )}
-
-      {/* ── Error ── */}
-      {phase === "error" && (
-        <div className="w-full max-w-md space-y-4 text-center">
-          <p className="text-red-400">{error}</p>
-          <button
-            onClick={handleReset}
-            className="bg-gray-700 hover:bg-gray-600 rounded-lg px-6 py-2 font-medium transition-colors"
-          >
-            Try again
-          </button>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={handleReset} className="flex-1">
+              <RotateCcw className="mr-2 h-4 w-4" /> New quiz
+            </Button>
+            <Button asChild className="flex-1">
+              <Link href="/progress">View progress <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            </Button>
+          </div>
         </div>
       )}
     </div>

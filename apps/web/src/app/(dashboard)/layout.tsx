@@ -1,5 +1,7 @@
-import NavBar from "@/components/layout/NavBar";
 import AuthGuard from "@/components/layout/AuthGuard";
+import { AppSidebar } from "@/components/layout/AppSidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
 
 export default function DashboardLayout({
   children,
@@ -8,8 +10,17 @@ export default function DashboardLayout({
 }) {
   return (
     <AuthGuard>
-      <NavBar />
-      <main className="flex-1 flex flex-col">{children}</main>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <header className="flex h-12 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+          </header>
+          <main className="flex flex-1 flex-col gap-4 p-6">{children}</main>
+        </SidebarInset>
+      </SidebarProvider>
     </AuthGuard>
   );
 }
+
