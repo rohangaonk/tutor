@@ -173,6 +173,7 @@ Steps:
 3. Add monitoring and alarms for queue depth and service health.
 4. Add smoke tests for the main user journeys.
 5. Review storage, retention, and lifecycle policies.
+6. Migrate Celery broker from Redis to SQS (eliminates ElastiCache, saves ~$13/mo). Switch `celery_app.py` to use the SQS broker URL, remove `REDIS_URL` env var, and remove the ElastiCache resources from `DataStack`.
 
 Definition of done:
 

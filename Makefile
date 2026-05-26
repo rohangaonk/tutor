@@ -35,7 +35,7 @@ api:
 	uv run --package api uvicorn api.main:app --reload --port 8000
 
 worker:
-	uv run --package worker celery -A worker.celery_app:app worker --loglevel=info
+	uv run --package worker python -m worker
 
 web:
 	cd apps/web && npm run dev

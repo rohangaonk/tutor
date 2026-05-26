@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg2://tutor:tutor@localhost:5434/tutor"
 
-    # Redis / Celery broker
-    redis_url: str = "redis://localhost:6379/0"
-
     # AWS / LocalStack
     aws_region: str = "us-east-1"
     aws_endpoint_url: str | None = None  # set to http://localhost:4566 locally

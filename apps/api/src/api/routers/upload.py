@@ -1,8 +1,8 @@
+import json
 import uuid
 
 import boto3
 from botocore.exceptions import ClientError
-from celery import Celery
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -13,8 +13,6 @@ from common.db import get_db
 from common.models import Document, DocumentStatus
 
 router = APIRouter(prefix="/upload", tags=["upload"])
-
-TASK_INGEST_DOCUMENT = "worker.tasks.ingest_document"
 
 
 def get_s3_client():
@@ -32,8 +30,19 @@ def get_s3_client():
     return boto3.client("s3", **kwargs)
 
 
-def get_celery_app() -> Celery:
-    return Celery(broker=settings.redis_url, backend=settings.redis_url)
+def get_sqs_client():
+    endpoint_url = settings.aws_endpoint_url
+    if endpoint_url is None and settings.sqs_queue_url.startswith("http://localhost"):
+        endpoint_url = "http://localhost:4566"
+
+    kwargs: dict = {
+        "region_name": settings.aws_region,
+        "aws_access_key_id": "test",
+        "aws_secret_access_key": "test",
+    }
+    if endpoint_url:
+        kwargs["endpoint_url"] = endpoint_url
+    return boto3.client("sqs", **kwargs)
 
 
 class PresignRequest(BaseModel):
@@ -96,7 +105,10 @@ def confirm_upload(
     db.commit()
     db.refresh(doc)
 
-    celery_app = get_celery_app()
-    celery_app.send_task(TASK_INGEST_DOCUMENT, args=[str(doc.id)])
+    sqs = get_sqs_client()
+    sqs.send_message(
+        QueueUrl=settings.sqs_queue_url,
+        MessageBody=json.dumps({"document_id": str(doc.id)}),
+    )
 
     return ConfirmResponse(document_id=doc.id)

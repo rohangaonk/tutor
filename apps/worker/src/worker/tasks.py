@@ -13,7 +13,6 @@ from pypdf import PdfReader
 from common.config import MODEL_REGISTRY, settings
 from common.db import SessionLocal
 from common.models import Chunk, Document, DocumentStatus
-from worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
@@ -205,8 +204,7 @@ def _extract_topics(chunks: list[str]) -> list[str]:
     return cleaned
 
 
-@app.task(name="worker.tasks.ingest_document", bind=True, max_retries=3, default_retry_delay=30)
-def ingest_document(self, document_id: str) -> None:
+def ingest_document(document_id: str) -> None:
     """Download, parse, chunk, embed, and persist a document."""
     doc_uuid = uuid.UUID(document_id)
     db = SessionLocal()
@@ -261,6 +259,6 @@ def ingest_document(self, document_id: str) -> None:
             doc.status = DocumentStatus.failed
             db.commit()
         logger.exception("ingest_document: %s — failed", document_id)
-        raise self.retry(exc=exc)
+        raise
     finally:
         db.close()
