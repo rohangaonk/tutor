@@ -11,7 +11,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (pathname === "/login") {
-      setChecked(true);
+      // Already signed in → go to dashboard
+      if (getToken()) {
+        router.replace("/");
+      } else {
+        setChecked(true);
+      }
       return;
     }
     if (!getToken()) {

@@ -104,10 +104,11 @@ export function AppSidebar() {
           </p>
           <button
             onClick={handleSignOut}
-            className="text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
+            className="flex items-center gap-1.5 text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
             title="Sign out"
           >
             <LogOut className="h-3.5 w-3.5" />
+            <span>Sign out</span>
           </button>
         </div>
       </SidebarFooter>

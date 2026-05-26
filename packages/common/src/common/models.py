@@ -100,6 +100,7 @@ class QuizAttempt(Base):
     ai_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     difficulty_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_skipped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["QuizSession"] = relationship(back_populates="attempts")

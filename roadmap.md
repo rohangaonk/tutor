@@ -129,13 +129,13 @@ Goal: build the user-facing experience once the backend contract is stable.
 
 Steps:
 
-1. Add authentication and session handling.
-2. Build the upload page.
-3. Build the chat page with streaming UI.
-4. Build the quiz page.
-5. Build the progress dashboard.
-6. Connect the frontend to the API endpoints.
-7. Add loading and error states.
+1. ✅ Add authentication and session handling.
+2. ✅ Build the upload page.
+3. ✅ Build the chat page with streaming UI.
+4. ✅ Build the quiz page.
+5. ✅ Build the progress dashboard.
+6. ✅ Connect the frontend to the API endpoints.
+7. ✅ Add loading and error states.
 
 Definition of done:
 

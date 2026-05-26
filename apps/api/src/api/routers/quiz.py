@@ -7,8 +7,13 @@ GET  /quiz/{session_id}/report — SQL-aggregated per-concept accuracy summary
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import random
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -16,7 +21,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
-from common.db import get_db
+from common.db import get_db, SessionLocal
 from common.models import Document, QuizAttempt, QuizSession
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
@@ -49,6 +54,11 @@ class AnswerResponse(BaseModel):
     next_concept: str | None
     difficulty: str
     is_completed: bool
+
+
+class SkipRequest(BaseModel):
+    session_id: str
+    questions_asked: int  # client's current count, used to detect if backend already advanced
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -92,7 +102,9 @@ def start_quiz(
     doc = db.get(Document, uuid.UUID(body.doc_id))
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    document_topics: list[str] = doc.topics or []
+    # Shuffle topics so each session presents questions in a different order.
+    document_topics: list[str] = list(doc.topics or [])
+    random.shuffle(document_topics)
 
     initial_state = {
         "doc_id": body.doc_id,
@@ -107,6 +119,7 @@ def start_quiz(
         "is_completed": False,
         "asked_concepts": [],
         "asked_question_embeddings": [],
+        "_asked_questions": [],
         "retry_count": 0,
         "retrieved_context": "",
         "current_topic": "",
@@ -118,6 +131,7 @@ def start_quiz(
         "correct_answer": "",
         "confidence_score": 0.0,
         "is_correct": False,
+        "is_skipped": False,
     }
 
     config = {"configurable": {"thread_id": session_id}}
@@ -190,6 +204,136 @@ def submit_answer(
     )
 
 
+@router.post("/skip", response_model=AnswerResponse)
+async def skip_question(body: SkipRequest, request: Request):
+    """Skip the current question.
+
+    Two scenarios:
+    A) Graph is paused at interrupt (user skips before/without submitting, OR backend
+       already completed the previous answer cycle quickly).
+    B) Graph is still running (user submitted, 7s passed, user chose to skip —
+       the backend answer request is still processing in a threadpool).
+
+    For (A) where questions_asked already advanced: the backend finished the full
+    cycle and the next question is ready — mark the just-persisted attempt as
+    skipped in the DB and return the already-generated question.
+
+    For (A) where questions_asked matches the client: skip evaluation cleanly by
+    injecting is_skipped=True and running the graph to the next interrupt.
+
+    For (B): wait up to 60 s for the graph to reach the next interrupt, then
+    retroactively mark the last attempt as skipped and return the question.
+    """
+    graph = _get_graph(request)
+    config = {"configurable": {"thread_id": body.session_id}}
+
+    snapshot = await graph.aget_state(config)
+    at_interrupt = tuple(snapshot.next) == ("evaluate_answer",)
+    is_done = not snapshot.next  # empty → session finished
+    questions_in_state = _get_state_value(snapshot, "questions_asked", 0)
+
+    logger.info(
+        "[SKIP] session=%s client_q=%d state_q=%d snapshot.next=%s at_interrupt=%s is_done=%s",
+        body.session_id, body.questions_asked, questions_in_state,
+        list(snapshot.next), at_interrupt, is_done,
+    )
+
+    if is_done:
+        # Session already complete
+        return AnswerResponse(
+            feedback="Session complete.",
+            correct_answer="",
+            confidence_score=0.0,
+            is_correct=False,
+            next_question=None,
+            next_concept=None,
+            difficulty=_get_state_value(snapshot, "difficulty", "medium"),
+            is_completed=True,
+        )
+
+    if at_interrupt and questions_in_state > body.questions_asked:
+        logger.info("[SKIP] branch=retroactive (backend already advanced)")
+        # Backend already completed the full cycle (evaluated + generated next Q).
+        # Retroactively mark the last persisted attempt as skipped.
+        db = SessionLocal()
+        try:
+            last_attempt = (
+                db.query(QuizAttempt)
+                .filter(QuizAttempt.session_id == uuid.UUID(body.session_id))
+                .order_by(QuizAttempt.created_at.desc())
+                .first()
+            )
+            if last_attempt and not last_attempt.is_skipped:
+                last_attempt.is_skipped = True
+                db.commit()
+        finally:
+            db.close()
+        # The next question is already in the snapshot
+        return AnswerResponse(
+            feedback="Question skipped.",
+            correct_answer="",
+            confidence_score=0.0,
+            is_correct=False,
+            next_question=_get_state_value(snapshot, "current_question"),
+            next_concept=_get_state_value(snapshot, "current_concept"),
+            difficulty=_get_state_value(snapshot, "difficulty", "medium"),
+            is_completed=False,
+        )
+
+    if at_interrupt:
+        logger.info("[SKIP] branch=clean (graph at interrupt, same question)")
+        # Graph is paused at the current question's interrupt — skip cleanly.
+        await graph.aupdate_state(config, {"is_skipped": True, "user_answer": "[skipped]"})
+        logger.info("[SKIP] injected is_skipped=True, invoking graph...")
+        await asyncio.wait_for(graph.ainvoke(None, config=config), timeout=60.0)
+        logger.info("[SKIP] graph invoke complete")
+    else:
+        logger.info("[SKIP] branch=mid-run (waiting for graph to finish)")
+        # Graph is mid-run (processing a submitted answer in a threadpool).
+        # Wait for it to reach the next interrupt (up to 60 s).
+        for _ in range(30):
+            await asyncio.sleep(2)
+            snapshot = await graph.aget_state(config)
+            if tuple(snapshot.next) in (("evaluate_answer",), ()) or not snapshot.next:
+                break
+        # Retroactively mark the last persisted attempt as skipped.
+        db = SessionLocal()
+        try:
+            last_attempt = (
+                db.query(QuizAttempt)
+                .filter(QuizAttempt.session_id == uuid.UUID(body.session_id))
+                .order_by(QuizAttempt.created_at.desc())
+                .first()
+            )
+            if last_attempt and not last_attempt.is_skipped:
+                last_attempt.is_skipped = True
+                db.commit()
+        finally:
+            db.close()
+
+    final_snapshot = await graph.aget_state(config)
+    is_completed = _get_state_value(final_snapshot, "is_completed", False)
+    next_question = _get_state_value(final_snapshot, "current_question")
+    next_concept = _get_state_value(final_snapshot, "current_concept")
+    difficulty = _get_state_value(final_snapshot, "difficulty", "medium")
+
+    logger.info(
+        "[SKIP] final: is_completed=%s next_question=%r next_concept=%r final.next=%s",
+        is_completed, next_question, next_concept, list(final_snapshot.next),
+    )
+
+    return AnswerResponse(
+        feedback="Question skipped.",
+        correct_answer="",
+        confidence_score=0.0,
+        is_correct=False,
+        next_question=next_question if not is_completed else None,
+        next_concept=next_concept if not is_completed else None,
+        difficulty=difficulty,
+        is_completed=is_completed,
+    )
+
+
 @router.get("/sessions")
 def list_sessions(
     db: Session = Depends(get_db),
@@ -231,6 +375,7 @@ def get_attempts(session_id: str, db: Session = Depends(get_db)):
     attempts = (
         db.query(QuizAttempt)
         .filter(QuizAttempt.session_id == sid)
+        .filter(QuizAttempt.is_skipped.is_(False))
         .order_by(QuizAttempt.created_at)
         .all()
     )
@@ -269,6 +414,7 @@ def get_report(
             func.avg(QuizAttempt.confidence_score).label("avg_confidence"),
         )
         .filter(QuizAttempt.session_id == sid)
+        .filter(QuizAttempt.is_skipped.is_(False))
         .group_by(QuizAttempt.concept)
         .all()
     )

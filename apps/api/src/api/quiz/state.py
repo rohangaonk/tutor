@@ -21,6 +21,7 @@ class QuizState(TypedDict):
     # ── Deduplication (grows each question cycle) ──────────────────────────
     asked_concepts: list[str]
     asked_question_embeddings: list[list[float]]  # 768-dim vectors
+    _asked_questions: list[str]                    # actual question text, for prompt dedup
     retry_count: int                               # MMR retries this cycle
 
     # ── Current question cycle ─────────────────────────────────────────────
@@ -36,3 +37,4 @@ class QuizState(TypedDict):
     correct_answer: str
     confidence_score: float
     is_correct: bool
+    is_skipped: bool  # True when the user skips a question (bypasses LLM evaluation)

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Document,
   listDocuments,
   startQuiz,
   submitAnswer,
+  skipQuestion,
   getQuizReport,
   listQuizSessions,
   listQuizAttempts,
@@ -95,6 +96,9 @@ export default function QuizPage() {
   const [quiz, setQuiz] = useState<QuizState | null>(null);
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [report, setReport] = useState<QuizReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -129,6 +133,10 @@ export default function QuizPage() {
 
   async function handleStart() {
     if (!selectedDocId) return;
+    // Clear any in-flight state from a previous quiz
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     setPhase("loading");
     setError(null);
     setHistory([]);
@@ -148,9 +156,19 @@ export default function QuizPage() {
   async function handleSubmit() {
     if (!quiz || !answer.trim() || submitting) return;
     setSubmitting(true);
+    setTimedOut(false);
     setPendingAnswer(answer.trim());
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+    timerRef.current = setTimeout(() => setTimedOut(true), 7000);
+
     try {
-      const res: QuizAnswerResponse = await submitAnswer(quiz.sessionId, answer.trim());
+      const res: QuizAnswerResponse = await submitAnswer(quiz.sessionId, answer.trim(), ac.signal);
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      setTimedOut(false);
+      abortControllerRef.current = null;
+
       const fb: FeedbackState = {
         feedback: res.feedback,
         correctAnswer: res.correct_answer,
@@ -169,10 +187,67 @@ export default function QuizPage() {
       } else {
         setPhase("feedback");
       }
+      setSubmitting(false);
     } catch (e) {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      abortControllerRef.current = null;
+      if (e instanceof DOMException && e.name === "AbortError") {
+        // User clicked Skip — handleSkip is taking over, don't reset state here
+        console.log("[handleSubmit] aborted by skip");
+        return;
+      }
+      setSubmitting(false);
+      setTimedOut(false);
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
       toast.error("Failed to submit answer");
+    }
+  }
+
+  function handleWait() {
+    setTimedOut(false);
+    timerRef.current = setTimeout(() => setTimedOut(true), 7000);
+  }
+
+  async function handleSkip() {
+    if (!quiz) return;
+    console.log("[handleSkip] called", { sessionId: quiz.sessionId, questionsAsked: quiz.questionsAsked, submitting, timedOut });
+    // Abort any in-flight submit
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    setTimedOut(false);
+    setSubmitting(true);
+    try {
+      console.log("[handleSkip] calling skipQuestion...");
+      const res = await skipQuestion(quiz.sessionId, quiz.questionsAsked);
+      console.log("[handleSkip] response", res);
+      if (res.is_completed) {
+        // Skipped the last question — go straight to done
+        setFeedback({
+          feedback: "",
+          correctAnswer: "",
+          confidence: 0,
+          isCorrect: false,
+          nextQuestion: null,
+          nextConcept: null,
+          nextDifficulty: res.difficulty,
+        });
+        setPhase("done");
+        setReportLoading(true);
+        getQuizReport(quiz.sessionId).then(setReport).catch(() => setReport(null)).finally(() => setReportLoading(false));
+      } else {
+        // Jump straight to next question, no feedback card
+        setQuiz({ ...quiz, question: res.next_question!, concept: res.next_concept ?? "", difficulty: res.difficulty, questionsAsked: quiz.questionsAsked + 1 });
+        setAnswer("");
+        setFeedback(null);
+        setPendingAnswer("");
+        setPhase("question");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("error");
+      toast.error("Failed to skip question");
     } finally {
       setSubmitting(false);
     }
@@ -188,6 +263,10 @@ export default function QuizPage() {
   }
 
   function handleReset() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    setTimedOut(false);
     setPhase("pick");
     setQuiz(null);
     setFeedback(null);
@@ -396,7 +475,7 @@ export default function QuizPage() {
         </Card>
       )}
 
-      {/* ── Question ── */}
+      {/* ── Question / Evaluating ── */}
       {phase === "question" && quiz && (
         <div className="space-y-4">
           {/* Progress */}
@@ -426,15 +505,45 @@ export default function QuizPage() {
                 placeholder="Type your answer… (Ctrl+Enter to submit)"
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) handleSubmit(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey && !submitting) handleSubmit(); }}
+                disabled={submitting}
                 className="resize-none"
               />
               <Button onClick={handleSubmit} disabled={!answer.trim() || submitting} className="w-full">
                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {submitting ? "Evaluating…" : "Submit Answer"}
               </Button>
+              <div className="flex justify-center">
+                <button
+                  onClick={handleSkip}
+                  disabled={submitting && !timedOut}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Skip this question
+                </button>
+              </div>
             </CardContent>
           </Card>
+
+          {/* Taking too long banner */}
+          {submitting && timedOut && (
+            <Card className="border-amber-500/40 bg-amber-500/5">
+              <CardContent className="py-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                  <span>Taking too long…</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={handleWait} className="h-7 px-3 text-xs">
+                    Wait
+                  </Button>
+                  <Button size="sm" onClick={handleSkip} className="h-7 px-3 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0">
+                    Skip
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import uuid
 
@@ -31,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 # ── Thresholds ───────────────────────────────────────────────────────────────
 
-SIMILARITY_THRESHOLD = 0.92     # reject question if cosine sim > this
-MAX_RETRIES = 3                 # max MMR retries per question cycle
+SIMILARITY_THRESHOLD = 0.82     # reject question if cosine sim > this (was 0.92 — too permissive)
+MAX_RETRIES = 3                 # max MMR retries per question cycle (was 3)
 
 DIFFICULTY_UP_THRESHOLD = 0.75  # promote difficulty when score exceeds this
 DIFFICULTY_DOWN_THRESHOLD = 0.40  # demote difficulty when score is below this
@@ -153,7 +154,10 @@ def retrieve_context(state: QuizState) -> dict:
 
     # Pick the topic for this question cycle
     if document_topics:
-        topic = document_topics[state["questions_asked"] % len(document_topics)]
+        # Advance topic index by total questions attempted (including skips),
+        # so skipping still moves to the next topic in the cycle.
+        questions_attempted = len(state.get("asked_concepts", []))
+        topic = document_topics[questions_attempted % len(document_topics)]
         query_seed = topic
     else:
         topic = ""
@@ -169,7 +173,7 @@ def retrieve_context(state: QuizState) -> dict:
         )
 
         if not all_chunks:
-            return {"retrieved_context": "", "current_topic": topic, "retry_count": 0}
+            return {"retrieved_context": "", "current_topic": topic}
 
         # Embed the topic (or fallback seed) to retrieve relevant chunks
         query_embedding = _embed_query(query_seed)
@@ -209,15 +213,25 @@ def retrieve_context(state: QuizState) -> dict:
     finally:
         db.close()
 
-    return {"retrieved_context": context, "current_topic": topic, "retry_count": 0}
+    return {"retrieved_context": context, "current_topic": topic}
 
 
 def generate_question(state: QuizState) -> dict:
     """LLM generates a question constrained to the current predefined topic."""
     current_topic = state.get("current_topic") or "general"
-    # Count how many questions have already been asked on this topic
-    prior_count = state["asked_concepts"].count(current_topic)
-    asked_on_topic = f"{prior_count} prior question(s) already asked on this topic" if prior_count else "none"
+    # Collect the actual questions already asked on this topic so the LLM can
+    # actively avoid repeating them (not just a count).
+    prior_questions_on_topic = [
+        q for q, c in zip(
+            state.get("_asked_questions", []),
+            state.get("asked_concepts", []),
+        )
+        if c == current_topic
+    ]
+    if prior_questions_on_topic:
+        asked_on_topic = "Avoid these questions: " + " | ".join(f'"{q}"' for q in prior_questions_on_topic)
+    else:
+        asked_on_topic = "none"
     prompt = _GENERATE_PROMPT.format(
         context=state["retrieved_context"],
         topic=current_topic,
@@ -249,9 +263,16 @@ def generate_question(state: QuizState) -> dict:
 
 def route_after_generate(state: QuizState) -> str:
     """Conditional edge: retry if question is too similar to past questions."""
-    too_similar = _is_too_similar(
-        state["current_question_embedding"],
-        state["asked_question_embeddings"],
+    past = state["asked_question_embeddings"]
+    candidate = state["current_question_embedding"]
+    if past:
+        max_sim = max(_cosine_similarity(candidate, p) for p in past)
+    else:
+        max_sim = 0.0
+    too_similar = max_sim > SIMILARITY_THRESHOLD
+    logger.info(
+        "route_after_generate: max_sim=%.3f threshold=%.2f too_similar=%s retry=%d",
+        max_sim, SIMILARITY_THRESHOLD, too_similar, state["retry_count"],
     )
     if too_similar and state["retry_count"] < MAX_RETRIES:
         logger.info(
@@ -263,6 +284,19 @@ def route_after_generate(state: QuizState) -> str:
 
 def evaluate_answer(state: QuizState) -> dict:
     """LLM scores the user's answer and returns structured feedback."""
+    logger.info(
+        "[evaluate_answer] is_skipped=%s user_answer=%r",
+        state.get("is_skipped"), state.get("user_answer", "")[:40],
+    )
+    if state.get("is_skipped"):
+        logger.info("[evaluate_answer] skipping LLM call")
+        return {
+            "ai_feedback": "Question skipped.",
+            "correct_answer": "",
+            "confidence_score": 0.0,
+            "is_correct": False,
+        }
+
     prompt = _EVALUATE_PROMPT.format(
         question=state["current_question"],
         context=state["retrieved_context"],
@@ -294,6 +328,9 @@ def evaluate_answer(state: QuizState) -> dict:
 
 def adapt_difficulty(state: QuizState) -> dict:
     """Adjust difficulty and update weak_areas based on the latest score."""
+    if state.get("is_skipped"):
+        return {}  # no difficulty change for skipped questions
+
     score = state["confidence_score"]
     current = state["difficulty"]
     idx = DIFFICULTY_LADDER.index(current)
@@ -314,6 +351,8 @@ def adapt_difficulty(state: QuizState) -> dict:
 
 def persist_attempt(state: QuizState) -> dict:
     """Write the completed Q&A pair to quiz_attempts and update the session score."""
+    is_skipped = state.get("is_skipped", False)
+    logger.info("[persist_attempt] is_skipped=%s concept=%r questions_asked_before=%d", is_skipped, state.get("current_concept"), state["questions_asked"])
     db = SessionLocal()
     try:
         attempt = QuizAttempt(
@@ -325,26 +364,38 @@ def persist_attempt(state: QuizState) -> dict:
             ai_feedback=state["ai_feedback"],
             confidence_score=state["confidence_score"],
             difficulty_level=state["difficulty"],
+            is_skipped=is_skipped,
         )
         db.add(attempt)
         db.commit()
     finally:
         db.close()
 
-    new_questions_asked = state["questions_asked"] + 1
-    new_total_score = state["total_score"] + state["confidence_score"]
+    # Skipped questions do NOT count toward the answered-question counter,
+    # so the session still produces `max_questions` real answers.
+    new_questions_asked = state["questions_asked"] + (0 if is_skipped else 1)
+    # Skipped questions don't count toward the session score
+    new_total_score = state["total_score"] + (0.0 if is_skipped else state["confidence_score"])
+    # Always track which concepts/questions were attempted so we cycle topics
+    # and avoid repeating the same question even after a skip.
     new_asked_concepts = state["asked_concepts"] + [state["current_concept"]]
+    new_asked_questions = state.get("_asked_questions", []) + [state["current_question"]]
     new_asked_embeddings = state["asked_question_embeddings"] + [
         state["current_question_embedding"]
     ]
+
+    logger.info("[persist_attempt] new questions_asked=%d (skipped=%s)", new_questions_asked, is_skipped)
 
     return {
         "questions_asked": new_questions_asked,
         "total_score": new_total_score,
         "asked_concepts": new_asked_concepts,
+        "_asked_questions": new_asked_questions,
         "asked_question_embeddings": new_asked_embeddings,
         "user_answer": "",
         "ai_feedback": "",
+        "retry_count": 0,
+        "is_skipped": False,
     }
 
 
@@ -375,10 +426,11 @@ def finalize_session(state: QuizState) -> dict:
             }
             db.flush()
 
-            # Aggregate per-concept confidence from this session's attempts
+            # Aggregate per-concept confidence from this session's attempts (skipped excluded)
             attempts = (
                 db.query(QuizAttempt)
                 .filter(QuizAttempt.session_id == session.id)
+                .filter(QuizAttempt.is_skipped.is_(False))
                 .all()
             )
             concept_scores: dict[str, list[float]] = {}
