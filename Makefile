@@ -1,4 +1,5 @@
-.PHONY: up down api worker web install sync init-localstack init-cognito seed-db
+.PHONY: up down api worker web install sync init-localstack init-cognito seed-db \
+        cdk-install cdk-synth cdk-bootstrap cdk-deploy-staging cdk-diff-staging
 
 up:
 	docker compose up -d
@@ -45,3 +46,20 @@ install:
 
 sync:
 	uv sync --all-packages
+
+# ── CDK Infrastructure ───────────────────────────────────────────────────────
+
+cdk-install:
+	cd infra && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+cdk-synth:
+	cd infra && npx cdk synth --profile tutor-deploy -c stage=staging
+
+cdk-diff-staging:
+	cd infra && npx cdk diff --all --profile tutor-deploy -c stage=staging
+
+cdk-bootstrap:
+	cd infra && npx cdk bootstrap --profile tutor-deploy
+
+cdk-deploy-staging:
+	cd infra && npx cdk deploy --all --profile tutor-deploy -c stage=staging --require-approval never

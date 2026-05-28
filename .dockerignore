@@ -1,0 +1,25 @@
+# CDK output and virtualenv — must be excluded to prevent recursive asset bundling
+infra/cdk.out/
+infra/.venv/
+
+# Python virtual environments everywhere
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/*.egg-info/
+
+# Frontend build artifacts
+apps/web/.next/
+apps/web/node_modules/
+node_modules/
+
+# Git and editor
+.git/
+.gitignore
+**/.DS_Store
+
+# Local environment files
+**/.env
+**/.env.*

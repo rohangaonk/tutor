@@ -148,11 +148,11 @@ Goal: deploy the system to AWS and Vercel with repeatable infrastructure.
 
 Steps:
 
-1. Initialize the AWS CDK project for infrastructure.
-2. Define stacks for data, API, and worker services.
-3. Provision S3, SQS, RDS, and Redis.
-4. Build ECS Fargate services for the API and worker.
-5. Configure secrets and environment variables.
+1. ✅ Initialize the AWS CDK project for infrastructure.
+2. ✅ Define stacks for data, API, and worker services.
+3. ✅ Provision S3, SQS, RDS, Cognito, and Secrets Manager (ElastiCache removed).
+4. ✅ Build ECS Fargate services for the API and worker.
+5. ✅ Configure secrets and environment variables.
 6. Set up image builds and deployments.
 7. Deploy the frontend to Vercel.
 8. Validate the full production-like flow in staging.
@@ -173,7 +173,7 @@ Steps:
 3. Add monitoring and alarms for queue depth and service health.
 4. Add smoke tests for the main user journeys.
 5. Review storage, retention, and lifecycle policies.
-6. Migrate Celery broker from Redis to SQS (eliminates ElastiCache, saves ~$13/mo). Switch `celery_app.py` to use the SQS broker URL, remove `REDIS_URL` env var, and remove the ElastiCache resources from `DataStack`.
+6. ✅ Migrate Celery broker from Redis to SQS (eliminates ElastiCache, saves ~$13/mo). Switch `celery_app.py` to use the SQS broker URL, remove `REDIS_URL` env var, and remove the ElastiCache resources from `DataStack`.
 
 Definition of done:
 

@@ -15,4 +15,4 @@ RUN uv sync --frozen --package worker --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["celery", "-A", "worker.celery_app:app", "worker", "--loglevel=info"]
+CMD ["python", "-m", "worker"]

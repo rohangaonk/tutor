@@ -1,0 +1,6 @@
+.venv
+*.egg-info
+dist
+build
+cdk.out
+.cdk.staging

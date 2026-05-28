@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +32,23 @@ MODEL_REGISTRY: dict[str, dict[str, str | None]] = {
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Database
-    database_url: str = "postgresql+psycopg2://tutor:tutor@localhost:5434/tutor"
+    # Database — set DATABASE_URL for local dev, or individual components for production
+    database_url: str | None = None
+    db_host: str = "localhost"
+    db_port: int = 5434
+    db_name: str = "tutor"
+    db_user: str = "tutor"
+    db_password: str = "tutor"
+
+    @model_validator(mode="after")
+    def compute_database_url(self) -> "Settings":
+        if not self.database_url:
+            object.__setattr__(
+                self,
+                "database_url",
+                f"postgresql+psycopg2://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}",
+            )
+        return self
 
     # AWS / LocalStack
     aws_region: str = "us-east-1"
@@ -54,8 +70,9 @@ class Settings(BaseSettings):
     @property
     def pg_dsn(self) -> str:
         """psycopg3-compatible DSN (strips SQLAlchemy driver prefix)."""
+        url: str = self.database_url  # type: ignore[assignment]  # always set by model_validator
         return (
-            self.database_url
+            url
             .replace("postgresql+psycopg2://", "postgresql://")
             .replace("postgresql+psycopg://", "postgresql://")
         )
