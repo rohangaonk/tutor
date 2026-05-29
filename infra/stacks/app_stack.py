@@ -2,6 +2,8 @@ import os
 
 import aws_cdk as cdk
 from aws_cdk import (
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_ecs_patterns as ecs_patterns,
@@ -228,11 +230,36 @@ class AppStack(cdk.Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
         )
 
+        # ── CloudFront distribution (HTTPS termination for the ALB) ──────────
+
+        distribution = cloudfront.Distribution(
+            self,
+            "ApiCdn",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.HttpOrigin(
+                    api_service.load_balancer.load_balancer_dns_name,
+                    protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+                ),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            ),
+        )
+
         # ── Outputs ───────────────────────────────────────────────────────────
 
         cdk.CfnOutput(
             self,
             "ApiUrl",
+            value=cdk.Fn.join(
+                "", ["https://", distribution.distribution_domain_name]
+            ),
+            description="CloudFront HTTPS URL — use this as NEXT_PUBLIC_API_URL in Vercel",
+        )
+        cdk.CfnOutput(
+            self,
+            "AlbUrl",
             value=cdk.Fn.join(
                 "", ["http://", api_service.load_balancer.load_balancer_dns_name]
             ),
