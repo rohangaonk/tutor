@@ -1,5 +1,5 @@
 .PHONY: up down api worker web install sync init-localstack init-cognito seed-db \
-        cdk-install cdk-synth cdk-bootstrap cdk-deploy-staging cdk-diff-staging
+        cdk-install cdk-synth cdk-bootstrap cdk-deploy-staging cdk-diff-staging cdk-destroy-staging
 
 up:
 	docker compose up -d
@@ -62,4 +62,7 @@ cdk-bootstrap:
 	cd infra && npx cdk bootstrap --profile tutor-deploy
 
 cdk-deploy-staging:
-	cd infra && npx cdk deploy --all --profile tutor-deploy -c stage=staging --require-approval never
+	cd infra && npx cdk deploy --all --profile tutor-deploy -c stage=staging
+
+cdk-destroy-staging:
+	cd infra && npx cdk destroy --all --profile tutor-deploy -c stage=staging

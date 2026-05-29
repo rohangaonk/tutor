@@ -1,8 +1,6 @@
 import aws_cdk as cdk
 from aws_cdk import (
     aws_cognito as cognito,
-    aws_ec2 as ec2,
-    aws_rds as rds,
     aws_s3 as s3,
     aws_secretsmanager as sm,
     aws_sqs as sqs,
@@ -11,28 +9,10 @@ from constructs import Construct
 
 
 class DataStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, stage: str, vpc: ec2.Vpc, **kwargs):
+    def __init__(self, scope: Construct, id: str, *, stage: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
         is_prod = stage == "production"
-
-        # ── Security Groups ──────────────────────────────────────────────────
-        # RDS SG allows VPC-internal traffic only (isolated subnet + CIDR rule).
-        # This avoids cross-stack SG reference cycles.
-
-        self.rds_sg = ec2.SecurityGroup(
-            self,
-            "RdsSG",
-            vpc=vpc,
-            security_group_name=f"tutor-rds-{stage}",
-            description="RDS Postgres - allows VPC-internal traffic on 5432",
-            allow_all_outbound=False,
-        )
-        self.rds_sg.add_ingress_rule(
-            ec2.Peer.ipv4(vpc.vpc_cidr_block),
-            ec2.Port.tcp(5432),
-            "VPC-internal to Postgres",
-        )
 
         # ── S3 ───────────────────────────────────────────────────────────────
 
@@ -85,36 +65,21 @@ class DataStack(cdk.Stack):
             ),
         )
 
-        # ── RDS Postgres ──────────────────────────────────────────────────────
+        # ── Supabase Database URL ──────────────────────────────────────────
+        # Store the Supabase connection string in Secrets Manager.
+        # After first deploy, update with the real URL from the Supabase dashboard:
+        #   aws secretsmanager put-secret-value \
+        #     --secret-id tutor/{stage}/supabase-database-url \
+        #     --secret-string 'postgresql+psycopg2://...' \
+        #     --profile tutor-deploy
 
-        self.db_name = "tutor"
-
-        self.db_instance = rds.DatabaseInstance(
+        self.supabase_db_secret = sm.Secret(
             self,
-            "Database",
-            engine=rds.DatabaseInstanceEngine.postgres(
-                version=rds.PostgresEngineVersion.VER_16,
-            ),
-            instance_type=ec2.InstanceType.of(
-                ec2.InstanceClass.T3,
-                ec2.InstanceSize.MEDIUM if is_prod else ec2.InstanceSize.MICRO,
-            ),
-            vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
-            security_groups=[self.rds_sg],
-            database_name=self.db_name,
-            credentials=rds.Credentials.from_generated_secret("tutor"),
-            multi_az=is_prod,
-            allocated_storage=20,
-            max_allocated_storage=100,
-            backup_retention=cdk.Duration.days(0) if not is_prod else cdk.Duration.days(7),
-            deletion_protection=is_prod,
-            removal_policy=cdk.RemovalPolicy.RETAIN if is_prod else cdk.RemovalPolicy.DESTROY,
-            storage_encrypted=True,
-            instance_identifier=f"tutor-db-{stage}",
+            "SupabaseDbUrl",
+            secret_name=f"tutor/{stage}/supabase-database-url",
+            description="Supabase PostgreSQL connection URL",
+            secret_string_value=cdk.SecretValue.unsafe_plain_text("REPLACE_ME"),
         )
-        # The generated secret contains: host, port, username, password, dbname
-        self.db_secret = self.db_instance.secret
 
         # ── Cognito User Pool ─────────────────────────────────────────────────
 
@@ -169,13 +134,10 @@ class DataStack(cdk.Stack):
         cdk.CfnOutput(self, "S3BucketName", value=self.bucket.bucket_name)
         cdk.CfnOutput(self, "SqsQueueUrl", value=self.queue.queue_url)
         cdk.CfnOutput(self, "DlqUrl", value=self.dlq.queue_url)
-        cdk.CfnOutput(self, "RdsEndpoint", value=self.db_instance.db_instance_endpoint_address)
-        cdk.CfnOutput(self, "RdsPort", value=self.db_instance.db_instance_endpoint_port)
+        cdk.CfnOutput(self, "SupabaseDbSecretArn", value=self.supabase_db_secret.secret_arn)
         cdk.CfnOutput(self, "CognitoUserPoolId", value=self.user_pool.user_pool_id)
         cdk.CfnOutput(
             self,
             "CognitoClientId",
             value=self.user_pool_client.user_pool_client_id,
         )
-        if self.db_secret:
-            cdk.CfnOutput(self, "DbSecretArn", value=self.db_secret.secret_arn)

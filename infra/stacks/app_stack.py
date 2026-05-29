@@ -48,9 +48,8 @@ class AppStack(cdk.Stack):
         )
 
         # ── ECS Task Security Group ───────────────────────────────────────────
-        # Created here (not in DataStack) to avoid cross-stack SG reference cycles.
-        # RDS/Redis SGs allow ingress from the VPC CIDR, so these tasks reach them
-        # as long as they run in private subnets within the same VPC.
+        # Attached to API and Worker tasks. Allows all outbound (for Supabase,
+        # Secrets Manager, S3, SQS, Cognito endpoints via NAT Gateway).
 
         ecs_task_sg = ec2.SecurityGroup(
             self,
@@ -84,8 +83,7 @@ class AppStack(cdk.Stack):
                 ),
             ],
         )
-        if data_stack.db_secret:
-            data_stack.db_secret.grant_read(execution_role)
+        data_stack.supabase_db_secret.grant_read(execution_role)
         data_stack.groq_secret.grant_read(execution_role)
         data_stack.openrouter_secret.grant_read(execution_role)
 
@@ -125,10 +123,6 @@ class AppStack(cdk.Stack):
         # (fetched from Secrets Manager at task start, never stored in task def).
 
         shared_environment = {
-            "DB_HOST": data_stack.db_instance.db_instance_endpoint_address,
-            "DB_PORT": data_stack.db_instance.db_instance_endpoint_port,
-            "DB_NAME": data_stack.db_name,
-            "DB_USER": "tutor",
             "AWS_REGION": self.region,
             "S3_BUCKET": data_stack.bucket.bucket_name,
             "SQS_QUEUE_URL": data_stack.queue.queue_url,
@@ -139,13 +133,10 @@ class AppStack(cdk.Stack):
         }
 
         shared_secrets: dict[str, ecs.Secret] = {
+            "DATABASE_URL": ecs.Secret.from_secrets_manager(data_stack.supabase_db_secret),
             "GROQ_API_KEY": ecs.Secret.from_secrets_manager(data_stack.groq_secret),
             "OPENROUTER_API_KEY": ecs.Secret.from_secrets_manager(data_stack.openrouter_secret),
         }
-        if data_stack.db_secret:
-            shared_secrets["DB_PASSWORD"] = ecs.Secret.from_secrets_manager(
-                data_stack.db_secret, "password"
-            )
 
         # ── API Task Definition ───────────────────────────────────────────────
 
@@ -169,7 +160,7 @@ class AppStack(cdk.Stack):
                 log_group=api_log_group,
             ),
             health_check=ecs.HealthCheck(
-                command=["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+                command=["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"],
                 interval=cdk.Duration.seconds(30),
                 timeout=cdk.Duration.seconds(5),
                 retries=3,

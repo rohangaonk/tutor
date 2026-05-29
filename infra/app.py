@@ -21,10 +21,8 @@ data_stack = DataStack(
     app,
     f"TutorData-{stage}",
     stage=stage,
-    vpc=vpc_stack.vpc,
     env=env,
 )
-data_stack.add_dependency(vpc_stack)
 
 app_stack = AppStack(
     app,
